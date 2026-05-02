@@ -24,3 +24,4 @@ thor_bench
 *.o
 *.a
 *.so
+.cache/

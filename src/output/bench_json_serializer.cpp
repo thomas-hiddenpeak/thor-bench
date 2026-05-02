@@ -38,6 +38,13 @@ std::string serializeJson(const BenchReport& report) {
         w.field_int("warmup_count", r.warmup_count);
         if (!r.params_json.empty())
             w.field_string("params", r.params_json);
+        if (!r.metadata.empty()) {
+            w.begin_object("metadata");
+            for (const auto& [k, v] : r.metadata) {
+                w.field_string(k, v);
+            }
+            w.end_object();
+        }
         if (!r.probe_snapshot.empty())
             w.field_string("probe_snapshot", r.probe_snapshot);
         w.end_object();

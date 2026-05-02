@@ -56,10 +56,11 @@ src/
 
 bench/suites/
 ├── compute/     # memory_bench, sm_compute_bench, tensor_bench (.cu)
+├── memory/      # tegra_memory (.cu) — SoC memory arch (Device/Pinned/Registered)
 ├── encode/      # h264_encode_bench (.cpp)
 ├── decode/      # h264_decode_bench (.cpp)
 ├── cpu/         # arm_compute_bench (.cpp)
-└── system/      # pcie_bench (.cu)
+└── system/      # host_device_transfer (.cu) — renamed from pcie_bench
 ```
 
 ## Design Principles

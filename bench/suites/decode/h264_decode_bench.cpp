@@ -1,4 +1,5 @@
 #include "h264_decode_bench.h"
+#include "bench_suites.h"
 #include <cuda_runtime.h>
 #include <string>
 #include <sstream>
@@ -137,4 +138,9 @@ std::vector<BenchResult> runH264DecodeBench(int device, int width, int height, i
     return results;
 }
 
-}
+} // anonymous namespace
+
+BENCH_REGISTER_SUITE(h264_decode, "NVDEC H.264 decoding",
+    [](deusridet::bench::BenchRunner& runner) -> std::vector<deusridet::bench::BenchResult> {
+        return deusridet::bench::runH264DecodeBench(0, 1920, 1080, 60, 10);
+    });

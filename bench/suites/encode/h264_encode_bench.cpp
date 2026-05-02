@@ -1,4 +1,5 @@
 #include "h264_encode_bench.h"
+#include "bench_suites.h"
 #include <cuda_runtime.h>
 #include <string>
 #include <sstream>
@@ -136,4 +137,9 @@ std::vector<BenchResult> runH264EncodeBench(int device, int width, int height, i
     return results;
 }
 
-}
+} // anonymous namespace
+
+BENCH_REGISTER_SUITE(h264_encode, "NVENC H.264 encoding",
+    [](deusridet::bench::BenchRunner& runner) -> std::vector<deusridet::bench::BenchResult> {
+        return deusridet::bench::runH264EncodeBench(0, 1920, 1080, 60, 10);
+    });

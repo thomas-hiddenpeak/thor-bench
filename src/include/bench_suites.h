@@ -11,7 +11,7 @@ namespace deusridet::bench {
 struct BenchSuite {
     std::string name;
     std::string description;
-    std::function<void(BenchRunner&, BenchResult&)> runFn;
+    std::function<std::vector<BenchResult>(BenchRunner&)> runFn;
 };
 
 class BenchSuiteRegistry {

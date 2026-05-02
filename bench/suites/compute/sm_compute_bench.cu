@@ -1,4 +1,5 @@
 #include "bench/suites/compute/sm_compute_bench.h"
+#include "bench_suites.h"
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
 #include <algorithm>
@@ -284,3 +285,9 @@ std::vector<BenchResult> runSMComputeBench(int device, int blockSizes[], int num
 }
 
 } // namespace deusridet::bench
+
+BENCH_REGISTER_SUITE(sm_compute, "SM FP32/FP64 compute throughput",
+    [](deusridet::bench::BenchRunner& runner) -> std::vector<deusridet::bench::BenchResult> {
+        int blockSizes[] = {128, 256, 512};
+        return deusridet::bench::runSMComputeBench(0, blockSizes, 3, 10);
+    });

@@ -1,4 +1,5 @@
-#include "bench/suites/system/pcie_bench.h"
+#include "bench/suites/system/host_device_transfer.h"
+#include "bench_suites.h"
 #include <cuda_runtime.h>
 #include <algorithm>
 #include <cmath>
@@ -17,11 +18,12 @@ inline void chk(cudaError_t e, const char* m) {
 BenchResult computeStats(const std::vector<double>& vals,
                          const std::string& test, const std::string& pj) {
     BenchResult res;
-    res.suite_name = "pcie";
+    res.suite_name = "host_device_transfer";
     res.test_name  = test;
     res.unit       = "GB/s";
     res.warmup_count = 3;
     res.params_json = pj;
+    res.metadata["integrated"] = "true";
     int n = static_cast<int>(vals.size());
     res.sample_count = n;
     if (!vals.empty()) {
@@ -53,7 +55,7 @@ BenchResult computeStats(const std::vector<double>& vals,
 
 } // anonymous namespace
 
-std::vector<BenchResult> runPCIEBench(int device, size_t transferSize, int iterations) {
+std::vector<BenchResult> runHostDeviceTransferBench(int device, size_t transferSize, int iterations) {
     std::vector<BenchResult> results;
 
     chk(cudaSetDevice(device), "dev");
@@ -139,3 +141,8 @@ std::vector<BenchResult> runPCIEBench(int device, size_t transferSize, int itera
 }
 
 } // namespace deusridet::bench
+
+BENCH_REGISTER_SUITE(host_device_transfer, "Host↔Device transfer bandwidth (pinned memory)",
+    [](deusridet::bench::BenchRunner& runner) -> std::vector<deusridet::bench::BenchResult> {
+        return deusridet::bench::runHostDeviceTransferBench(0, 256 * 1024 * 1024, 10);
+    });

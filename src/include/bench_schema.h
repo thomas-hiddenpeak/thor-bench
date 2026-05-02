@@ -2,6 +2,7 @@
 
 #include <string>
 #include <vector>
+#include <map>
 #include <chrono>
 #include <optional>
 #include <limits>
@@ -34,6 +35,7 @@ struct BenchResult {
     int warmup_count = 0;
     std::string params_json;
     std::string probe_snapshot;
+    std::map<std::string, std::string> metadata;
 };
 
 struct BenchReport {

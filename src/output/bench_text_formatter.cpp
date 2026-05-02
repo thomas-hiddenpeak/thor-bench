@@ -102,6 +102,15 @@ std::string formatText(const BenchReport& report) {
         if (!ptr->params_json.empty()) {
             os << DIM << "        params: " << RESET << ptr->params_json << "\n";
         }
+
+        // metadata (if present)
+        if (!ptr->metadata.empty()) {
+            os << DIM << "        metadata:" << RESET;
+            for (const auto& [k, v] : ptr->metadata) {
+                os << " " << k << "=" << v;
+            }
+            os << "\n";
+        }
     }
 
     // ── footer ──

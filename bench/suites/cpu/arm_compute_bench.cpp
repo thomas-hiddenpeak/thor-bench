@@ -1,4 +1,5 @@
 #include "arm_compute_bench.h"
+#include "bench_suites.h"
 #include <cmath>
 #include <limits>
 #include <chrono>
@@ -163,4 +164,9 @@ std::vector<BenchResult> runArmComputeBench(int threadCount, int iterations) {
     return results;
 }
 
-}
+} // anonymous namespace
+
+BENCH_REGISTER_SUITE(arm_compute, "ARM CPU FP32 NEON/SVE throughput",
+    [](deusridet::bench::BenchRunner& runner) -> std::vector<deusridet::bench::BenchResult> {
+        return deusridet::bench::runArmComputeBench(4, 10);
+    });

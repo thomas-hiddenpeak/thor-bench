@@ -1,4 +1,5 @@
 #include "bench/suites/compute/memory_bench.h"
+#include "bench_suites.h"
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
 #include <algorithm>
@@ -176,3 +177,8 @@ std::vector<BenchResult> runMemoryBench(int device, size_t transferSize, int ite
 }
 
 } // namespace deusridet::bench
+
+BENCH_REGISTER_SUITE(memory, "HBM memory bandwidth (read/write/copy)",
+    [](deusridet::bench::BenchRunner& runner) -> std::vector<deusridet::bench::BenchResult> {
+        return deusridet::bench::runMemoryBench(0, 256 * 1024 * 1024, 10);
+    });

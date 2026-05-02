@@ -261,31 +261,33 @@ int main(int argc, char* argv[]) {
     report.version    = "0.1.0";
     report.timestamp  = get_timestamp();
     report.hostname   = get_hostname();
-    report.results.reserve(suites.size());
 
     bool anyFailed = false;
 
     for (const auto& suite : suites) {
         std::cout << "[" << suite.name << "] " << suite.description << std::endl;
 
-        BenchResult dummyResult{};
-        dummyResult.suite_name = suite.name;
-
         try {
-            suite.runFn(runner, dummyResult);
+            auto results = suite.runFn(runner);
+            report.results.insert(report.results.end(), results.begin(), results.end());
         } catch (const std::exception& e) {
             std::cerr << "[" << suite.name << "] FAILED: " << e.what() << std::endl;
-            dummyResult.test_name = "error";
-            dummyResult.sample_count = 0;
+            BenchResult errResult{};
+            errResult.suite_name = suite.name;
+            errResult.test_name  = "error";
+            errResult.sample_count = 0;
+            report.results.push_back(errResult);
             anyFailed = true;
         } catch (...) {
             std::cerr << "[" << suite.name << "] FAILED with unknown exception" << std::endl;
-            dummyResult.test_name = "unknown_error";
-            dummyResult.sample_count = 0;
+            BenchResult errResult{};
+            errResult.suite_name = suite.name;
+            errResult.test_name  = "unknown_error";
+            errResult.sample_count = 0;
+            report.results.push_back(errResult);
             anyFailed = true;
         }
 
-        report.results.push_back(dummyResult);
         std::cout << std::endl;
     }
 

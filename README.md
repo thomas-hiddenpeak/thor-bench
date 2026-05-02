@@ -43,9 +43,10 @@ thor-bench provides a structured benchmarking framework with statistical analysi
 | Suite | Domain | Metrics | Implementation |
 |-------|--------|---------|----------------|
 | `memory` | HBM bandwidth | GB/s (read/write/copy) | CUDA kernels + events |
-| `compute` | SM FP32/FP64 | GFLOP/s | FMA kernels, parameterized block sizes |
-| `tensor` | Tensor Core WMMA | TFLOP/s (FP16/BF16) | WMMA 16\u00d716\u00d716 tiles |
-| `pcie` | Host\u2194Device transfer | GB/s | Pinned memory + async copies |
+| `sm_compute` | SM FP32/FP64 | GFLOP/s | FMA kernels, parameterized block sizes |
+| `tensor` | Tensor Core WMMA | TFLOP/s (FP16/BF16) | WMMA 16×16×16 tiles |
+| `host_device_transfer` | Host↔Device transfer | GB/s | Pinned memory + async copies (integrated SoC) |
+| `tegra_memory` | SoC memory architecture | GB/s (read/write per type) | Device/Pinned/Registered (Sysmem Full Coherency) |
 | `h264_encode` | NVENC encoding | FPS | CUDA YUV simulation (NVENC API stub) |
 | `h264_decode` | NVDEC decoding | FPS | CUDA YUV simulation (NVDEC API stub) |
 | `arm_compute` | CPU FP32 | GFLOP/s | NEON/SVE intrinsics, multi-threaded |

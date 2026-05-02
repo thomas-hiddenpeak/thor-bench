@@ -1,4 +1,5 @@
 #include "bench/suites/compute/tensor_bench.h"
+#include "bench_suites.h"
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
 #include <cuda_fp16.h>
@@ -230,3 +231,8 @@ std::vector<BenchResult> runTensorBench(int device, int matDim, int iterations) 
 }
 
 } // namespace deusridet::bench
+
+BENCH_REGISTER_SUITE(tensor, "Tensor Core WMMA throughput (FP16/BF16)",
+    [](deusridet::bench::BenchRunner& runner) -> std::vector<deusridet::bench::BenchResult> {
+        return deusridet::bench::runTensorBench(0, 2048, 10);
+    });

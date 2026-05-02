@@ -22,7 +22,8 @@ set(BENCH_CUDA_SRCS
     bench/suites/compute/memory_bench.cu
     bench/suites/compute/sm_compute_bench.cu
     bench/suites/compute/tensor_bench.cu
-    bench/suites/system/pcie_bench.cu
+    bench/suites/memory/tegra_memory.cu
+    bench/suites/system/host_device_transfer.cu
 )
 
 set(BENCH_CPP_SRCS
