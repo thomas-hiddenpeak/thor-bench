@@ -70,6 +70,31 @@ bench/suites/
 
 No tests, CI, linters, or formatters yet. Greenfield.
 
+## Thor Platform Constraints
+
+Source: [CUDA for Tegra AppNote](https://docs.nvidia.com/cuda/cuda-for-tegra-appnote/)
+
+- **`cudaMemGetInfo()` is unreliable** — does not account for SWAP. Use `/proc/meminfo` to estimate available memory.
+- **P2P not supported** — do not use `cudaPeerGetStatus`, `cudaDeviceEnablePeerAccess`, etc.
+- **NVML not available** — use `tegrastats` for system monitoring / thermal data.
+- **JIT compilation not supported** — no `cudaModuleLoadDataEx` with JIT options.
+- **nvGRAPH, cuSOLVER not supported.**
+- **CUB is experimental only** — avoid production reliance.
+
+### Memory Architecture (Tegra SoC)
+
+- Device, Host, and Unified memory all reside on the same physical SoC DRAM.
+- **Sysmem Full Coherency (Thor-only)**: `cudaHostRegister()` enables GPU L2 caching. `pageableMemoryAccess=1` allows direct GPU access to pageable memory.
+- **Unified Memory on Thor**: `concurrentManagedAccess=1`, UVM selects GPU uncached + IO coherent. Use `cudaMemPrefetchAsync()` to prefetch pages.
+
+### Memory Selection Guidance for Benchmarks
+
+| Use case | Recommended type |
+|----------|-----------------|
+| GPU-only workloads | Device memory |
+| Small buffers | Pinned memory |
+| CPU + GPU shared | Unified / Registered Host memory |
+
 ## Style Notes
 
 - Headers use `.h` extension (not `.hpp`).
