@@ -2,6 +2,10 @@
 
 C++20/CUDA hardware benchmark suite for NVIDIA Thor (SM110a, Blackwell). MIT-licensed.
 
+## References
+
+- [CUDA for Tegra AppNote](https://docs.nvidia.com/cuda/cuda-for-tegra-appnote/) — Primary source for Thor/Tegra platform constraints, memory architecture, supported/unsupported CUDA features. Consult before writing any benchmark that touches memory, system monitoring, or device capabilities.
+
 ## Build
 
 ```bash
