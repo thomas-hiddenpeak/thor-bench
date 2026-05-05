@@ -40,16 +40,40 @@ thor-bench provides a structured benchmarking framework with statistical analysi
 
 ## Benchmark Suites
 
-| Suite | Domain | Metrics | Implementation |
-|-------|--------|---------|----------------|
-| `memory` | HBM bandwidth | GB/s (read/write/copy) | CUDA kernels + events |
-| `sm_compute` | SM FP32/FP64 | GFLOP/s | FMA kernels, parameterized block sizes |
-| `tensor` | Tensor Core WMMA | TFLOP/s (FP16/BF16) | WMMA 16×16×16 tiles |
-| `host_device_transfer` | Host↔Device transfer | GB/s | Pinned memory + async copies (integrated SoC) |
-| `tegra_memory` | SoC memory architecture | GB/s (read/write per type) | Device/Pinned/Registered (Sysmem Full Coherency) |
-| `h264_encode` | NVENC encoding | FPS | CUDA YUV simulation (NVENC API stub) |
-| `h264_decode` | NVDEC decoding | FPS | CUDA YUV simulation (NVDEC API stub) |
-| `arm_compute` | CPU FP32 | GFLOP/s | NEON/SVE intrinsics, multi-threaded |
+All suites report `peak_pct` — percentage of T5000 theoretical maximum. See [AGENTS.md](AGENTS.md) for peak reference values.
+
+| Suite | Domain | Metrics | Status |
+|-------|--------|---------|--------|
+| `memory` | LPDDR5X bandwidth | GB/s (read/write/copy) + shared mem crossbar | ✅ |
+| `sm_compute` | SM FP32/FP64 | GFLOP/s (FMA + register pressure) | ✅ |
+| `tensor` | Tensor Core WMMA | TFLOP/s (FP16) | ✅ (BF16 stub — CUDA 13.0 limitation) |
+| `sasp` | FP8 dense + 2:4 sparse | TFLOP/s | ✅ FP8 dense (scalar); sparse stub (needs tcgen05) |
+| `tegra_memory` | SoC memory architecture | GB/s (Device/Pinned/Registered/Pageable) | ✅ |
+| `tma_copy` | TMA async copy | GB/s (H2D/D2H/D2D) | ✅ Fallback — mempool unsupported, uses cudaMalloc |
+| `unified_memory` | Managed memory bandwidth | GB/s (read/write via `cudaMemPrefetchAsync()`) | ✅ |
+| `l2_cache` | L2 cache hit/miss bandwidth | GB/s (hit/miss) | ✅ |
+| `shared_carveout` | L1/shared memory carveout ratio | GB/s (carveout 0–100) | ✅ |
+| `fp4` | NVFP4 dense/sparse GEMM | TFLOP/s (via cublasLt) | ✅ |
+| `tcgen05_fp16` | TCGen05 FP16/BF16 block-scaled GEMM | TFLOP/s | ✅ |
+| `tcgen05_fp8` | TCGen05 FP8 GEMM | TFLOP/s | ⚠️ Scalar fallback; sparse stub |
+| `int8_tensor` | INT8 tensor core throughput | TOP/s | ⚠️ Scalar fallback; sparse stub |
+| `tmem` | TCGen05 TMEM bandwidth | GB/s | ⚠️ SMEM proxy (tcgen05 ld/st requires SMEM descriptors) |
+| `mbarrier` | cuda::barrier latency | ns | ✅ 6 tests (64-1024 threads + syncthreads baseline) |
+| `cluster_sync` | Cluster sync latency | ns (__syncthreads) | ✅ (cluster_barrier stub) |
+| `kernel_launch` | Kernel launch + CUDA Graph | µs | ✅ |
+| `warp_primitives` | Warp shuffle, ballot, activemask | ns | ✅ |
+| `h264_encode` | NVENC H.264 encoding | FPS (1080p/4K) | ✅ |
+| `h264_decode` | NVDEC H.264 decoding | FPS (1080p/4K) | ✅ |
+| `hevc_encode` | NVENC HEVC encoding | FPS (1080p/4K) | ✅ |
+| `hevc_decode` | NVDEC HEVC decoding | FPS (1080p/4K) | ✅ |
+| `av1_decode` | NVDEC AV1 decoding | FPS (1080p/4K) | ✅ |
+| `arm_compute` | CPU FP32 baseline | GFLOP/s (NEON/SVE, multi-threaded) | ✅ |
+| `arm_sve2` | ARM CPU NEON fallback | GFLOP/s (FP32/FP16/INT8) | ⚠️ NEON fallback (SVE2 intrinsics unavailable) |
+| `host_device_transfer` | Host↔Device transfer | GB/s (integrated SoC memory) | ✅ |
+| `thermal_throttle` | Sustained FP32 under thermal | GFLOP/s (60s run) | ✅ |
+| `multi_stream` | Multi-stream copy | GB/s (concurrent streams) | ✅ |
+| `allocator_latency` | cudaMalloc/cudaFree latency | µs median + allocs/s | ✅ |
+| `mig` | MIG partitioning | GFLOP/s | ⚠️ Full GPU only; MIG partition stub (DevKit) |
 
 ## Prerequisites
 
