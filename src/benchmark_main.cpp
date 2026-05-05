@@ -13,8 +13,9 @@
 #include "bench_schema.h"
 #include "bench_runner.h"
 #include "bench_suites.h"
-#include "output/bench_json_serializer.h"
-#include "output/bench_text_formatter.h"
+#include "bench_json_serializer.h"
+#include "bench_text_formatter.h"
+#include "cupti_profiler.h"
 #include "communis/cuda_check.h"
 
 using namespace deusridet::bench;
@@ -35,11 +36,13 @@ static void print_usage(const char* prog) {
               << "  --warmup N        Number of warmup runs per test (default: 3)\n"
               << "  --timeout SEC     Per-suite timeout in seconds (default: 300)\n"
               << "  --device N        CUDA device index (default: 0)\n"
+              << "  --cupti           Enable CUPTI activity profiling\n"
               << "  --help            Show this message\n";
 }
 
 struct CliArgs {
     bool     json         = false;
+    bool     cupti        = false;
     std::vector<std::string> suites;
     int      iterations   = 10;
     int      warmup       = 3;
@@ -74,6 +77,8 @@ static CliArgs parse_args(int argc, char* argv[]) {
             exit(EXIT_SUCCESS_CODE);
         } else if (arg == "--json") {
             args.json = true;
+        } else if (arg == "--cupti") {
+            args.cupti = true;
         } else if (arg == "--suites") {
             if (i + 1 >= argc) {
                 std::cerr << "Error: --suites requires an argument" << std::endl;
@@ -235,6 +240,18 @@ int main(int argc, char* argv[]) {
         return EXIT_PARAM_ERROR;
     }
 
+    // ── CUPTI profiler ──
+    CuptiOverhead cuptiOverhead{};
+    if (args.cupti) {
+        auto& cupti = CuptiProfiler::instance();
+        if (!cupti.init(args.device)) {
+            std::cerr << "Warning: CUPTI init failed, disabling profiling" << std::endl;
+            args.cupti = false;
+        } else {
+            std::cerr << "[CUPTI] Profiler initialized" << std::endl;
+        }
+    }
+
     // ── Build runner ──
     BenchRunner runner;
     runner.warmup(args.warmup);
@@ -243,7 +260,7 @@ int main(int argc, char* argv[]) {
 
     // ── Banner ──
     const char* banner = "DeusRidet-Thor Benchmark Suite v0.1.0\n"
-                         "======================================\n";
+                          "======================================\n";
     if (args.json) {
         std::cerr << banner;
     } else {
@@ -251,7 +268,9 @@ int main(int argc, char* argv[]) {
         std::cout << "Device: " << args.device << " | ";
         std::cout << "Suites: " << suites.size() << " | ";
         std::cout << "Iterations: " << args.iterations << " | ";
-        std::cout << "Warmup: " << args.warmup << "\n";
+        std::cout << "Warmup: " << args.warmup;
+        if (args.cupti) std::cout << " | CUPTI: ON";
+        std::cout << "\n";
         std::cout << std::string(72, '=') << "\n";
         std::cout << std::endl;
     }
@@ -265,14 +284,20 @@ int main(int argc, char* argv[]) {
     bool anyFailed = false;
 
     for (const auto& suite : suites) {
-        std::cout << "[" << suite.name << "] " << suite.description << std::endl;
+        if (!args.json) {
+            std::cout << "[" << suite.name << "] " << suite.description << std::endl;
+        }
+
+        if (args.cupti) {
+            CuptiProfiler::instance().startRange(suite.name.c_str());
+        }
 
         try {
             auto results = suite.runFn(runner);
             report.results.insert(report.results.end(), results.begin(), results.end());
         } catch (const std::exception& e) {
             std::cerr << "[" << suite.name << "] FAILED: " << e.what() << std::endl;
-            BenchResult errResult{};
+            BenchResult errResult;
             errResult.suite_name = suite.name;
             errResult.test_name  = "error";
             errResult.sample_count = 0;
@@ -280,7 +305,7 @@ int main(int argc, char* argv[]) {
             anyFailed = true;
         } catch (...) {
             std::cerr << "[" << suite.name << "] FAILED with unknown exception" << std::endl;
-            BenchResult errResult{};
+            BenchResult errResult;
             errResult.suite_name = suite.name;
             errResult.test_name  = "unknown_error";
             errResult.sample_count = 0;
@@ -288,7 +313,27 @@ int main(int argc, char* argv[]) {
             anyFailed = true;
         }
 
-        std::cout << std::endl;
+        if (args.cupti) {
+            CuptiProfiler::instance().stopRange();
+        }
+
+        // Drain any pending async errors from the previous suite
+        cudaError_t pendingErr = cudaGetLastError();
+        if (pendingErr != cudaSuccess) {
+            cudaDeviceSynchronize();
+        }
+
+        if (!args.json) std::cout << std::endl;
+    }
+
+    // ── CUPTI overhead measurement ──
+    if (args.cupti) {
+        cuptiOverhead = CuptiProfiler::instance().measureOverhead();
+        std::cerr << "[CUPTI] Overhead: baseline="
+                  << cuptiOverhead.baseline_ns << "ns "
+                  << "instrumented=" << cuptiOverhead.instrumented_ns << "ns "
+                  << "overhead=" << std::fixed << std::setprecision(1)
+                  << cuptiOverhead.overhead_pct << "%" << std::endl;
     }
 
     // ── Output ──
@@ -296,6 +341,29 @@ int main(int argc, char* argv[]) {
         std::cout << serializeJson(report) << std::endl;
     } else {
         std::cout << formatText(report) << std::endl;
+    }
+
+    // ── CUPTI results ──
+    if (args.cupti) {
+        auto cuptiResults = CuptiProfiler::instance().getResults();
+        std::cout << "\n" << std::string(72, '=') << "\n";
+        std::cout << "[CUPTI Activity Summary]\n";
+        std::cout << std::string(72, '-') << "\n";
+        for (const auto& data : cuptiResults) {
+            std::cout << "  " << data.suite_name
+                      << " | wall=" << data.wall_ns.count() / 1e6 << "ms"
+                      << " | activities=" << data.activities.size();
+            if (!data.metrics.empty()) {
+                std::cout << " | metrics:";
+                for (const auto& [k, v] : data.metrics) {
+                    std::cout << " " << k << "=" << v;
+                }
+            }
+            std::cout << "\n";
+        }
+        std::cout << std::string(72, '=') << "\n";
+
+        CuptiProfiler::instance().shutdown();
     }
 
     return anyFailed ? EXIT_EXEC_FAIL : EXIT_SUCCESS_CODE;

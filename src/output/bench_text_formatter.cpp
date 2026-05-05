@@ -79,6 +79,9 @@ std::string formatText(const BenchReport& report) {
         if (ptr->score) {
             os << "  " << score_tag(ptr->score);
         }
+        if (ptr->peak_pct) {
+            os << "  " << DIM << "peak=" << RESET << std::fixed << std::setprecision(1) << *ptr->peak_pct << DIM << "%" << RESET;
+        }
         os << "\n";
 
         // stats line

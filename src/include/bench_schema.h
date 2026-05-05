@@ -30,6 +30,7 @@ struct BenchResult {
     double max_val = std::numeric_limits<double>::lowest();
 
     std::optional<double> score;
+    std::optional<double> peak_pct;
 
     int sample_count = 0;
     int warmup_count = 0;

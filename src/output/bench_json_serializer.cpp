@@ -1,5 +1,6 @@
 #include "bench_json_serializer.h"
-#include "json_writer.h"
+#include <cmath>
+#include "communis/json_writer.h"
 
 #include <sstream>
 #include <iomanip>
@@ -34,6 +35,7 @@ std::string serializeJson(const BenchReport& report) {
         w.field_double("min", r.min_val);
         w.field_double("max", r.max_val);
         w.field_optional_double("score", r.score);
+        w.field_optional_double("peak_pct", r.peak_pct);
         w.field_int("sample_count", r.sample_count);
         w.field_int("warmup_count", r.warmup_count);
         if (!r.params_json.empty())
