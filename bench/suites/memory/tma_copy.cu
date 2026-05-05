@@ -1,0 +1,230 @@
+#include "memory/tma_copy.h"
+#include "bench_schema.h"
+#include "bench_peaks.h"
+#include <cuda_runtime.h>
+#include <cuda_runtime_api.h>
+#include <algorithm>
+#include <cmath>
+#include <sstream>
+#include <stdexcept>
+
+namespace deusridet::bench {
+
+namespace {
+
+inline void chk(cudaError_t e, const char* m) {
+    if (e != cudaSuccess)
+        throw std::runtime_error(std::string("CUDA(") + m + "): " + cudaGetErrorString(e));
+}
+
+BenchResult computeStats(std::vector<double>& vals, int warmup) {
+    std::sort(vals.begin(), vals.end());
+    int n = static_cast<int>(vals.size());
+    double sum = 0;
+    for (double v : vals) sum += v;
+    double mean = sum / n;
+
+    double sq = 0;
+    for (double v : vals) { double d = v - mean; sq += d * d; }
+    double stddev = std::sqrt(sq / n);
+
+    auto pct = [&](double p) -> double {
+        if (n <= 1) return vals[0];
+        double r = p * (n - 1);
+        int lo = static_cast<int>(std::floor(r));
+        int hi = static_cast<int>(std::ceil(r));
+        if (hi >= n) return vals.back();
+        return vals[lo] * (1.0 - (r - lo)) + vals[hi] * (r - lo);
+    };
+
+    BenchResult res;
+    res.sample_count = n;
+    res.warmup_count = warmup;
+    res.min_val  = vals.front();
+    res.max_val  = vals.back();
+    res.mean     = mean;
+    res.median   = (n % 2 == 1) ? vals[n / 2] : (vals[n / 2 - 1] + vals[n / 2]) / 2.0;
+    res.stddev   = stddev;
+    res.p95      = pct(0.95);
+    res.p99      = pct(0.99);
+    return res;
+}
+
+void benchDirection(void* src, void* dst, size_t bytes,
+                    cudaMemcpyKind kind, int iters,
+                    cudaEvent_t evS, cudaEvent_t evE, cudaStream_t str,
+                    const char* testName, const char* allocType,
+                    std::vector<BenchResult>& results) {
+    std::vector<double> vals;
+    for (int i = 0; i < iters; ++i) {
+        chk(cudaEventRecord(evS, str), "rs");
+        chk(cudaMemcpyAsync(dst, src, bytes, kind, str), "cpy");
+        chk(cudaEventRecord(evE, str), "re");
+        chk(cudaStreamSynchronize(str), "sy");
+        float ms = 0;
+        chk(cudaEventElapsedTime(&ms, evS, evE), "et");
+        double sec = ms / 1000.0;
+        double gb = sec > 0.0 ? (bytes / 1073741824.0) / sec : 0.0;
+        vals.push_back(gb);
+    }
+    BenchResult res = computeStats(vals, 3);
+    res.suite_name = "tma_copy";
+    res.test_name  = testName;
+    res.unit       = "GB/s";
+    res.peak_pct   = computePeakPctSame(res.median, T5000Peaks::memory_bandwidth_gbs);
+    res.metadata["alloc_type"] = allocType;
+    if (std::string(allocType) == "fallback")
+        res.metadata["fallback_reason"] = "cudaMemPoolCreate unsupported on Tegra";
+    res.metadata["copy_kind"] = kind == cudaMemcpyHostToDevice ? "h2d" :
+                             kind == cudaMemcpyDeviceToHost ? "d2h" : "d2d";
+    {
+        std::ostringstream p;
+        p << "{\"bytes\":" << bytes << "}";
+        res.params_json = p.str();
+    }
+    results.push_back(res);
+}
+
+} // anonymous namespace
+
+std::vector<BenchResult> runTMACopyBench(int device, size_t transferSize, int iterations) {
+    std::vector<BenchResult> results;
+
+    size_t allocBytes = (transferSize + 3) / 4 * 4;
+
+    cudaEvent_t evS, evE;
+    cudaStream_t str;
+    cudaMemPool_t pool = nullptr;
+
+    chk(cudaSetDevice(device), "dev");
+    chk(cudaEventCreate(&evS), "es");
+    chk(cudaEventCreate(&evE), "ee");
+    chk(cudaStreamCreate(&str), "st");
+
+    // Create mempool — may fail on Tegra (cudaMemPoolCreate not supported on embedded platforms)
+    bool useMempool = false;
+    const char* allocType = "mempool";
+    cudaMemPoolProps props{};
+    props.allocType = cudaMemAllocationTypePinned;
+    props.handleTypes = cudaMemHandleTypeNone;
+    cudaError_t memPoolErr = cudaMemPoolCreate(&pool, &props);
+
+    void* dBuf1 = nullptr;
+    void* dBuf2 = nullptr;
+    void* hBuf = nullptr;
+
+    if (memPoolErr == cudaSuccess) {
+        useMempool = true;
+        size_t poolLimit = allocBytes * 4;
+        chk(cudaMemPoolSetAttribute(pool, cudaMemPoolAttrReleaseThreshold, &poolLimit), "mpa");
+
+        // Allocate device buffers from mempool
+        chk(cudaMallocFromPoolAsync(&dBuf1, allocBytes, pool, str), "ma1");
+        chk(cudaMallocFromPoolAsync(&dBuf2, allocBytes, pool, str), "ma2");
+        chk(cudaStreamSynchronize(str), "mas");
+    } else {
+        // Fallback: regular cudaMalloc + cudaHostAlloc
+        allocType = "fallback";
+        chk(cudaMalloc(&dBuf1, allocBytes), "ma1");
+        chk(cudaMalloc(&dBuf2, allocBytes), "ma2");
+    }
+
+    // Host pinned buffer for H2D/D2H
+    chk(cudaHostAlloc(&hBuf, allocBytes, cudaHostAllocDefault), "hst");
+
+    // Initialize buffers
+    chk(cudaMemset(dBuf1, 0xAA, allocBytes), "ms1");
+    chk(cudaMemset(dBuf2, 0xBB, allocBytes), "ms2");
+    std::fill(static_cast<char*>(hBuf), static_cast<char*>(hBuf) + allocBytes, 0xCC);
+
+    // Warmup copies
+    for (int w = 0; w < 3; ++w) {
+        chk(cudaMemcpyAsync(dBuf1, hBuf, allocBytes, cudaMemcpyHostToDevice, str), "wh2d");
+        chk(cudaMemcpyAsync(hBuf, dBuf1, allocBytes, cudaMemcpyDeviceToHost, str), "wd2h");
+        chk(cudaMemcpyAsync(dBuf2, dBuf1, allocBytes, cudaMemcpyDeviceToDevice, str), "wd2d");
+    }
+    chk(cudaStreamSynchronize(str), "ws");
+
+    try {
+        benchDirection(hBuf, dBuf1, allocBytes,
+                        cudaMemcpyHostToDevice, iterations,
+                        evS, evE, str, "tma_copy_h2d", allocType, results);
+    } catch (const std::exception& ex) {
+        BenchResult r;
+        r.suite_name = "tma_copy";
+        r.test_name  = "tma_copy_h2d";
+        r.unit       = "GB/s";
+        r.metadata["alloc_type"] = allocType;
+        r.metadata["copy_kind"] = "h2d";
+        std::string err = "{\"error\":\"";
+        err += ex.what();
+        err += "\",\"bytes\":";
+        err += std::to_string(allocBytes);
+        err += "}";
+        r.params_json = err;
+        results.push_back(r);
+    }
+
+    try {
+        benchDirection(dBuf1, hBuf, allocBytes,
+                        cudaMemcpyDeviceToHost, iterations,
+                        evS, evE, str, "tma_copy_d2h", allocType, results);
+    } catch (const std::exception& ex) {
+        BenchResult r;
+        r.suite_name = "tma_copy";
+        r.test_name  = "tma_copy_d2h";
+        r.unit       = "GB/s";
+        r.metadata["alloc_type"] = allocType;
+        r.metadata["copy_kind"] = "d2h";
+        std::string err = "{\"error\":\"";
+        err += ex.what();
+        err += "\",\"bytes\":";
+        err += std::to_string(allocBytes);
+        err += "}";
+        r.params_json = err;
+        results.push_back(r);
+    }
+
+    try {
+        benchDirection(dBuf1, dBuf2, allocBytes,
+                        cudaMemcpyDeviceToDevice, iterations,
+                        evS, evE, str, "tma_copy_d2d", allocType, results);
+    } catch (const std::exception& ex) {
+        BenchResult r;
+        r.suite_name = "tma_copy";
+        r.test_name  = "tma_copy_d2d";
+        r.unit       = "GB/s";
+        r.metadata["alloc_type"] = allocType;
+        r.metadata["copy_kind"] = "d2d";
+        std::string err = "{\"error\":\"";
+        err += ex.what();
+        err += "\",\"bytes\":";
+        err += std::to_string(allocBytes);
+        err += "}";
+        r.params_json = err;
+        results.push_back(r);
+    }
+
+    // Cleanup
+    chk(cudaFree(dBuf1), "f1");
+    chk(cudaFree(dBuf2), "f2");
+    if (useMempool) {
+        chk(cudaMemPoolTrimTo(pool, 0), "mpt");
+        chk(cudaMemPoolDestroy(pool), "mpd");
+    }
+    chk(cudaFreeHost(hBuf), "fh");
+    chk(cudaStreamDestroy(str), "ds");
+    chk(cudaEventDestroy(evS), "de");
+    chk(cudaEventDestroy(evE), "de");
+
+    return results;
+}
+
+} // namespace deusridet::bench
+
+#include "bench_suites.h"
+
+BENCH_REGISTER_SUITE(tma_copy, "TMA async copy bandwidth (mempool)",
+    [](deusridet::bench::BenchRunner&) -> std::vector<deusridet::bench::BenchResult> {
+        return deusridet::bench::runTMACopyBench(0, 256*1024*1024, 10);
+    });
