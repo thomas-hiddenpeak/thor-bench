@@ -1,4 +1,4 @@
-#include "bench/suites/system/host_device_transfer.h"
+#include "system/host_device_transfer.h"
 #include "bench_suites.h"
 #include <cuda_runtime.h>
 #include <algorithm>
@@ -103,7 +103,7 @@ std::vector<BenchResult> runHostDeviceTransferBench(int device, size_t transferS
         }
         std::ostringstream p;
         p << "{\"transfer_size\":" << transferSize
-          << ",\"pinned\":true,"
+          << ",\"pinned\":true"
           << ",\"integrated\":" << (prop.integrated ? "true" : "false") << "}";
         results.push_back(computeStats(vals, "host_to_device", p.str()));
     }
@@ -124,7 +124,7 @@ std::vector<BenchResult> runHostDeviceTransferBench(int device, size_t transferS
         }
         std::ostringstream p;
         p << "{\"transfer_size\":" << transferSize
-          << ",\"pinned\":true,"
+          << ",\"pinned\":true"
           << ",\"integrated\":" << (prop.integrated ? "true" : "false") << "}";
         results.push_back(computeStats(vals, "device_to_host", p.str()));
     }

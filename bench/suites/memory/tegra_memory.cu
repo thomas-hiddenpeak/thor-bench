@@ -1,4 +1,5 @@
-#include "bench/suites/memory/tegra_memory.h"
+#include "memory/tegra_memory.h"
+#include "bench_peaks.h"
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
 #include <algorithm>
@@ -103,6 +104,7 @@ void benchDevice(const float* dSrc, float* dDst, size_t numElems,
         res.test_name  = "device_read";
         res.unit       = "GB/s";
         res.metadata["memory_type"] = "device";
+        res.peak_pct = computePeakPctSame(res.median, T5000Peaks::memory_bandwidth_gbs);
         {
             std::ostringstream p;
             p << "{\"bytes\":" << allocBytes << ",\"tpb\":" << kTpb << ",\"grid\":" << gridX << "}";
@@ -130,6 +132,7 @@ void benchDevice(const float* dSrc, float* dDst, size_t numElems,
         res.test_name  = "device_write";
         res.unit       = "GB/s";
         res.metadata["memory_type"] = "device";
+        res.peak_pct = computePeakPctSame(res.median, T5000Peaks::memory_bandwidth_gbs);
         {
             std::ostringstream p;
             p << "{\"bytes\":" << allocBytes << ",\"tpb\":" << kTpb << ",\"grid\":" << gridX << "}";
@@ -157,7 +160,7 @@ void benchPinned(const float* dSrc, float* dDst, size_t numElems,
         std::vector<double> vals;
         for (int i = 0; i < iters; ++i) {
             chk(cudaEventRecord(evS, str), "rs");
-            memReadKernel<<<gridX, kTpb, 0, str>>>(dDst, dSrc, numElems);
+            memReadKernel<<<gridX, kTpb, 0, str>>>(dSrc, dDst, numElems);
             chk(cudaEventRecord(evE, str), "re");
             chk(cudaStreamSynchronize(str), "sy");
             float ms = 0;
@@ -171,6 +174,7 @@ void benchPinned(const float* dSrc, float* dDst, size_t numElems,
         res.test_name  = "pinned_read";
         res.unit       = "GB/s";
         res.metadata["memory_type"] = "pinned";
+        res.peak_pct = computePeakPctSame(res.median, T5000Peaks::memory_bandwidth_gbs);
         {
             std::ostringstream p;
             p << "{\"bytes\":" << allocBytes << ",\"tpb\":" << kTpb << ",\"grid\":" << gridX << "}";
@@ -198,6 +202,7 @@ void benchPinned(const float* dSrc, float* dDst, size_t numElems,
         res.test_name  = "pinned_write";
         res.unit       = "GB/s";
         res.metadata["memory_type"] = "pinned";
+        res.peak_pct = computePeakPctSame(res.median, T5000Peaks::memory_bandwidth_gbs);
         {
             std::ostringstream p;
             p << "{\"bytes\":" << allocBytes << ",\"tpb\":" << kTpb << ",\"grid\":" << gridX << "}";
@@ -291,6 +296,7 @@ void benchRegistered(float* dDst, size_t numElems,
         res.test_name  = "registered_read";
         res.unit       = "GB/s";
         res.metadata["memory_type"] = "registered";
+        res.peak_pct = computePeakPctSame(res.median, T5000Peaks::memory_bandwidth_gbs);
         {
             std::ostringstream p;
             p << "{\"bytes\":" << allocBytes << ",\"tpb\":" << kTpb << ",\"grid\":" << gridX
@@ -319,6 +325,7 @@ void benchRegistered(float* dDst, size_t numElems,
         res.test_name  = "registered_write";
         res.unit       = "GB/s";
         res.metadata["memory_type"] = "registered";
+        res.peak_pct = computePeakPctSame(res.median, T5000Peaks::memory_bandwidth_gbs);
         {
             std::ostringstream p;
             p << "{\"bytes\":" << allocBytes << ",\"tpb\":" << kTpb << ",\"grid\":" << gridX
@@ -330,6 +337,127 @@ void benchRegistered(float* dDst, size_t numElems,
 
     chk(cudaHostUnregister(hBuf), "hur");
     free(hBuf);
+}
+
+// ---- pageable memory benchmark (Thor pageableMemoryAccess=1) ----
+
+void benchPageable(float* dDst, size_t numElems,
+                   size_t allocBytes, int gridX, int iters,
+                   cudaEvent_t evS, cudaEvent_t evE, cudaStream_t str,
+                   std::vector<BenchResult>& results) {
+
+    // Check if pageableMemoryAccess is supported
+    int pageableAccess = 0;
+    cudaError_t attrErr = cudaDeviceGetAttribute(&pageableAccess,
+                                                  cudaDevAttrPageableMemoryAccess, 0);
+    if (attrErr != cudaSuccess || pageableAccess != 1) {
+        BenchResult r;
+        r.suite_name = "tegra_memory";
+        r.test_name  = "pageable_read";
+        r.unit       = "GB/s";
+        r.sample_count = 0;
+        r.warmup_count = 0;
+        r.metadata["memory_type"] = "pageable";
+        r.metadata["pageableMemoryAccess"] = "0";
+        std::string err = "{\"error\":\"pageableMemoryAccess not supported\"}";
+        r.params_json = err;
+        results.push_back(r);
+
+        BenchResult r2 = r;
+        r2.test_name = "pageable_write";
+        results.push_back(r2);
+        return;
+    }
+
+    // Allocate pageable host memory with plain malloc
+    float* hBuf = static_cast<float*>(std::malloc(allocBytes));
+    if (!hBuf) {
+        BenchResult r;
+        r.suite_name = "tegra_memory";
+        r.test_name  = "pageable_read";
+        r.unit       = "GB/s";
+        r.sample_count = 0;
+        r.warmup_count = 0;
+        r.metadata["memory_type"] = "pageable";
+        r.metadata["pageableMemoryAccess"] = "1";
+        r.params_json = "{\"error\":\"malloc failed\",\"bytes\":" + std::to_string(allocBytes) + "}";
+        results.push_back(r);
+
+        BenchResult r2 = r;
+        r2.test_name = "pageable_write";
+        results.push_back(r2);
+        return;
+    }
+
+    // Initialize buffer via host
+    for (size_t i = 0; i < numElems; ++i) hBuf[i] = 0.5f;
+
+    // Warmup: launch kernels directly on the host pointer (pageableMemoryAccess=1)
+    for (int w = 0; w < 3; ++w) {
+        memReadKernel<<<gridX, kTpb, 0, str>>>(hBuf, dDst, numElems);
+        memWriteKernel<<<gridX, kTpb, 0, str>>>(hBuf, numElems);
+    }
+    chk(cudaStreamSynchronize(str), "wp");
+
+    // Read bandwidth: GPU reads from pageable host memory
+    {
+        std::vector<double> vals;
+        for (int i = 0; i < iters; ++i) {
+            chk(cudaEventRecord(evS, str), "rs");
+            memReadKernel<<<gridX, kTpb, 0, str>>>(hBuf, dDst, numElems);
+            chk(cudaEventRecord(evE, str), "re");
+            chk(cudaStreamSynchronize(str), "sy");
+            float ms = 0;
+            chk(cudaEventElapsedTime(&ms, evS, evE), "et");
+            double sec = ms / 1000.0;
+            double gb = sec > 0.0 ? (allocBytes / 1073741824.0) / sec : 0.0;
+            vals.push_back(gb);
+        }
+        BenchResult res = computeStats(vals, 3);
+        res.suite_name = "tegra_memory";
+        res.test_name  = "pageable_read";
+        res.unit       = "GB/s";
+        res.metadata["memory_type"] = "pageable";
+        res.metadata["pageableMemoryAccess"] = "1";
+        res.peak_pct = computePeakPctSame(res.median, T5000Peaks::memory_bandwidth_gbs);
+        {
+            std::ostringstream p;
+            p << "{\"bytes\":" << allocBytes << ",\"tpb\":" << kTpb << ",\"grid\":" << gridX << "}";
+            res.params_json = p.str();
+        }
+        results.push_back(res);
+    }
+
+    // Write bandwidth: GPU writes to pageable host memory
+    {
+        std::vector<double> vals;
+        for (int i = 0; i < iters; ++i) {
+            chk(cudaEventRecord(evS, str), "rs");
+            memWriteKernel<<<gridX, kTpb, 0, str>>>(hBuf, numElems);
+            chk(cudaEventRecord(evE, str), "re");
+            chk(cudaStreamSynchronize(str), "sy");
+            float ms = 0;
+            chk(cudaEventElapsedTime(&ms, evS, evE), "et");
+            double sec = ms / 1000.0;
+            double gb = sec > 0.0 ? (allocBytes / 1073741824.0) / sec : 0.0;
+            vals.push_back(gb);
+        }
+        BenchResult res = computeStats(vals, 3);
+        res.suite_name = "tegra_memory";
+        res.test_name  = "pageable_write";
+        res.unit       = "GB/s";
+        res.metadata["memory_type"] = "pageable";
+        res.metadata["pageableMemoryAccess"] = "1";
+        res.peak_pct = computePeakPctSame(res.median, T5000Peaks::memory_bandwidth_gbs);
+        {
+            std::ostringstream p;
+            p << "{\"bytes\":" << allocBytes << ",\"tpb\":" << kTpb << ",\"grid\":" << gridX << "}";
+            res.params_json = p.str();
+        }
+        results.push_back(res);
+    }
+
+    std::free(hBuf);
 }
 
 } // anonymous namespace
@@ -399,6 +527,23 @@ std::vector<BenchResult> runTegraMemoryBench(int device, size_t transferSize, in
         r.test_name  = "registered";
         r.unit       = "GB/s";
         r.metadata["memory_type"] = "registered";
+        std::string err = "{\"error\":\"";
+        err += ex.what();
+        err += "\",\"bytes\":";
+        err += std::to_string(allocBytes);
+        err += "}";
+        r.params_json = err;
+        results.push_back(r);
+    }
+
+    try {
+        benchPageable(dDst, numElems, allocBytes, gridX, iterations, evS, evE, str, results);
+    } catch (const std::exception& ex) {
+        BenchResult r;
+        r.suite_name = "tegra_memory";
+        r.test_name  = "pageable";
+        r.unit       = "GB/s";
+        r.metadata["memory_type"] = "pageable";
         std::string err = "{\"error\":\"";
         err += ex.what();
         err += "\",\"bytes\":";

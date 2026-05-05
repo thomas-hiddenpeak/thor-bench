@@ -8,10 +8,16 @@
 #include <limits>
 #include <chrono>
 #include <vector>
+#include <stdexcept>
 
 namespace deusridet::bench {
 
 namespace {
+
+inline void chk(cudaError_t e, const char* m) {
+    if (e != cudaSuccess)
+        throw std::runtime_error(std::string("CUDA(") + m + "): " + cudaGetErrorString(e));
+}
 
 bool probeNvenc(int dev) {
     cudaDeviceProp prop{};
@@ -21,22 +27,25 @@ bool probeNvenc(int dev) {
 }
 
 double encodePass(int dev, int w, int h) {
+    if (w > 7680 || h > 4320)
+        return 0.0;
+
     cudaSetDevice(dev);
     size_t frameBytes = static_cast<size_t>(w) * h * 3ULL / 2ULL;
 
     unsigned char *dIn = nullptr, *dOut = nullptr;
-    cudaMalloc(&dIn, frameBytes);
-    cudaMalloc(&dOut, frameBytes);
-    cudaMemset(dIn, 0x80, frameBytes);
+    chk(cudaMalloc(&dIn, frameBytes), "encode_alloc_in");
+    chk(cudaMalloc(&dOut, frameBytes), "encode_alloc_out");
+    chk(cudaMemset(dIn, 0x80, frameBytes), "encode_memset");
 
-    cudaDeviceSynchronize();
+    chk(cudaDeviceSynchronize(), "encode_sync_pre");
     auto t0 = std::chrono::steady_clock::now();
-    cudaMemcpy(dOut, dIn, frameBytes, cudaMemcpyDefault);
-    cudaDeviceSynchronize();
+    chk(cudaMemcpy(dOut, dIn, frameBytes, cudaMemcpyDefault), "encode_memcpy");
+    chk(cudaDeviceSynchronize(), "encode_sync_post");
     auto t1 = std::chrono::steady_clock::now();
 
-    cudaFree(dIn);
-    cudaFree(dOut);
+    chk(cudaFree(dIn), "encode_free_in");
+    chk(cudaFree(dOut), "encode_free_out");
 
     double sec = std::chrono::duration<double>(t1 - t0).count();
     if (sec <= 0.0)
@@ -75,6 +84,16 @@ std::vector<BenchResult> runH264EncodeBench(int device, int width, int height, i
 
     if (width <= 0 || height <= 0 || iterations <= 0)
         return results;
+
+    if (width > 7680 || height > 4320) {
+        BenchResult r{};
+        r.suite_name = "h264_encode";
+        r.test_name  = "dimension_exceeded";
+        r.unit       = "fps";
+        r.params_json = "{\"error\":\"resolution exceeds 7680x4320\"}";
+        results.push_back(r);
+        return results;
+    }
 
     int dCount = 0;
     if (cudaGetDeviceCount(&dCount) != cudaSuccess || device >= dCount) {

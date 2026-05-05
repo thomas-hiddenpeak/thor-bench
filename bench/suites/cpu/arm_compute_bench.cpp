@@ -84,9 +84,9 @@ std::vector<BenchResult> runArmComputeBench(int threadCount, int iterations) {
     std::vector<Case> cases = {
         {"sine_loop",     [](int n) { return sineBench(n); },   1e6, "gflops"},
         {"sqrt_loop",     [](int n) { return sqrtBench(n); },   1e6, "gflops"},
-        {"matmul_64",     [](int)  { return matMulBench(64); },  64*64*64*2.0, "gflops"},
         {"matmul_128",    [](int)  { return matMulBench(128); }, 128*128*128*2.0, "gflops"},
         {"matmul_256",    [](int)  { return matMulBench(256); }, 256*256*256*2.0, "gflops"},
+        {"matmul_512",    [](int)  { return matMulBench(512); }, 512*512*512*2.0, "gflops"},
     };
 
     for (const auto& c : cases) {

@@ -8,10 +8,16 @@
 #include <limits>
 #include <chrono>
 #include <vector>
+#include <stdexcept>
 
 namespace deusridet::bench {
 
 namespace {
+
+inline void chk(cudaError_t e, const char* m) {
+    if (e != cudaSuccess)
+        throw std::runtime_error(std::string("CUDA(") + m + "): " + cudaGetErrorString(e));
+}
 
 bool probeNvdec(int dev) {
     cudaDeviceProp prop{};
@@ -21,24 +27,27 @@ bool probeNvdec(int dev) {
 }
 
 double decodePass(int dev, int w, int h) {
+    if (w > 7680 || h > 4320)
+        return 0.0;
+
     cudaSetDevice(dev);
     size_t frameBytes = static_cast<size_t>(w) * h * 3ULL / 2ULL;
     size_t bitstreamSize = static_cast<size_t>(w) * h / 8;
 
     unsigned char *dBitstream = nullptr;
     unsigned char *dFrame     = nullptr;
-    cudaMalloc(&dBitstream, bitstreamSize);
-    cudaMalloc(&dFrame, frameBytes);
-    cudaMemset(dBitstream, 0x00, bitstreamSize);
+    chk(cudaMalloc(&dBitstream, bitstreamSize), "decode_alloc_bitstream");
+    chk(cudaMalloc(&dFrame, frameBytes), "decode_alloc_frame");
+    chk(cudaMemset(dBitstream, 0x00, bitstreamSize), "decode_memset");
 
-    cudaDeviceSynchronize();
+    chk(cudaDeviceSynchronize(), "decode_sync_pre");
     auto t0 = std::chrono::steady_clock::now();
-    cudaMemcpy(dFrame, dBitstream, std::min(frameBytes, bitstreamSize), cudaMemcpyDefault);
-    cudaDeviceSynchronize();
+    chk(cudaMemcpy(dFrame, dBitstream, std::min(frameBytes, bitstreamSize), cudaMemcpyDefault), "decode_memcpy");
+    chk(cudaDeviceSynchronize(), "decode_sync_post");
     auto t1 = std::chrono::steady_clock::now();
 
-    cudaFree(dBitstream);
-    cudaFree(dFrame);
+    chk(cudaFree(dBitstream), "decode_free_bitstream");
+    chk(cudaFree(dFrame), "decode_free_frame");
 
     double sec = std::chrono::duration<double>(t1 - t0).count();
     if (sec <= 0.0)
@@ -76,6 +85,16 @@ std::vector<BenchResult> runH264DecodeBench(int device, int width, int height, i
 
     if (width <= 0 || height <= 0 || iterations <= 0)
         return results;
+
+    if (width > 7680 || height > 4320) {
+        BenchResult r{};
+        r.suite_name = "h264_decode";
+        r.test_name  = "dimension_exceeded";
+        r.unit       = "fps";
+        r.params_json = "{\"error\":\"resolution exceeds 7680x4320\"}";
+        results.push_back(r);
+        return results;
+    }
 
     int dCount = 0;
     if (cudaGetDeviceCount(&dCount) != cudaSuccess || device >= dCount) {
