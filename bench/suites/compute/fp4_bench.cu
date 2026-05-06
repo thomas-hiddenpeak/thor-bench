@@ -78,8 +78,8 @@ __device__ static uint64_t buildMdesc(const void* ptr, int leadingDim, int strid
 
     uint64_t desc = 0;
     desc  = (base >> 4) & 0x3FFF;                              // [0:14)
-    desc |= ((leadingBytes >> 4) & 0x3FFF) << 16;              // [16:30)
-    desc |= ((strideBytes >> 4)  & 0x3FFF) << 32;              // [32:46)
+    desc |= (leadingBytes & 0x3FFF) << 16;                     // [16:30)
+    desc |= (strideBytes & 0x3FFF) << 32;                      // [32:46)
     desc |= (1ULL) << 46;                                       // [46:48) version_=1 (Blackwell)
     desc |= (0ULL) << 49;                                       // [49:52) base_offset_=0
     desc |= (0ULL) << 52;                                       // [52:53) lbo_mode_=0 (legacy)
@@ -271,22 +271,6 @@ __global__ void fp4Nvf4GemmKernel(
     }
 }
 
-// ── Check if NVFP4 tcgen05.mma is supported by current driver/firmware ─────
-// Thor reports CC 11.0 (not 11.1 as commonly assumed).
-// We only check CC here. Actual runtime support is verified during warmup.
-// NOTE: We do NOT launch a probe kernel here — if tcgen05 fails with
-// IllegalInstruction, the error poisons the CUDA context and cannot be
-// cleanly drained. Instead, we let measureFp4Dense/measureFp4Sparse handle
-// the failure during warmup and throw/catch there.
-static bool nvfp4Supported(int device) {
-    chk(cudaSetDevice(device), "probe_dev");
-    int major = 0, minor = 0;
-    chk(cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, device), "major");
-    chk(cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, device), "minor");
-    // Thor = 11.0 (confirmed via runtime). Guard only for pre-Blackwell.
-    return major >= 11;
-}
-
 // ── Measure FP4 NVFP4 Dense GEMM ────────────────────────────────────────────
 BenchResult measureFp4Dense(int device, int matDim, int iterations) {
     chk(cudaSetDevice(device), "dev");
@@ -341,22 +325,19 @@ BenchResult measureFp4Dense(int device, int matDim, int iterations) {
     dim3 grid(std::min(65535, N / WARP_N), std::min(65535, M / WARP_M), 1);
     int smemBytes = 4096 + 256 + 512 + 32 + 4;
 
-    // Warmup (probe + warmup: first launch checks tcgen05 support at runtime)
+    // Warmup: first launch detects tcgen05 failures at runtime
     {
         fp4Nvf4GemmKernel<<<grid, 32, smemBytes, str>>>(
             dA_fp4, dScaleA, dB_fp4, dScaleB, dC, M, N, K);
         cudaError_t e = cudaStreamSynchronize(str);
         if (e != cudaSuccess) {
             // tcgen05 unsupported by this driver — graceful fallback.
-            // CRITICAL: cudaDeviceSynchronize first to drain the illegal instruction
-            // error from the device BEFORE cleanup. Otherwise cudaStreamDestroy
-            // is async and the error leaks to benchmark_main's final_sync.
-            cudaDeviceSynchronize();
-            // Cleanup (ignore errors during cleanup — device state may be dirty)
+            // Cleanup first (ignore errors — device state may be dirty)
             cudaFree(dA); cudaFree(dB); cudaFree(dA_fp4); cudaFree(dB_fp4);
             cudaFree(dC); cudaFree(dScaleA); cudaFree(dScaleB);
             cudaStreamDestroy(str);
-            throw std::runtime_error(std::string("tcgen05.mma warmup failed: ") + cudaGetErrorString(e));
+        // Cleanup first (ignore errors — device state may be dirty)
+        throw std::runtime_error(std::string("tcgen05.mma warmup failed: ") + cudaGetErrorString(e));
         }
     }
     for (int w = 0; w < 2; ++w) {
@@ -880,34 +861,15 @@ static BenchResult makeStubSparse(const char* reason) {
 // ── Public API ──────────────────────────────────────────────────────────────
 std::vector<BenchResult> runFP4Bench(int device, int matDim, int iterations) {
     std::vector<BenchResult> results;
+    chk(cudaSetDevice(device), "dev");
 
-    // CRITICAL: Probe NVFP4 support BEFORE any kernel launch.
-    // The tcgen05.mma.kind::mxf4nvf4 instruction is not supported by all Thor
-    // drivers/firmware. When it fails, it corrupts TMEM/driver state that
-    // persists across subsequent suites. The probe kernel runs in isolation
-    // so corruption (if any) is contained.
-    bool supported = nvfp4Supported(device);
-    if (!supported) {
-        results.push_back(makeStubDense("tcgen05.mma.kind::mxf4nvf4 not supported by current driver/firmware"));
-        results.push_back(makeStubSparse("tcgen05.mma.sp.kind::mxf4nvf4 not supported by current driver/firmware"));
-        return results;
-    }
-
-    bool denseFailed = false;
     try {
         results.push_back(measureFp4Dense(device, matDim, iterations));
     } catch (const std::exception& ex) {
         results.push_back(makeStubDense((std::string("exception: ") + ex.what()).c_str()));
-        denseFailed = true;
-    }
-
-    // CRITICAL: If dense failed with IllegalInstruction, tcgen05 is unsupported.
-    // Do NOT attempt sparse — it will also fail and further poison the context.
-    // Drain the pending error so benchmark_main's cudaGetLastError() stays clean.
-    if (denseFailed) {
-        cudaGetLastError(); // drain async error
-        results.push_back(makeStubSparse("tcgen05.mma.sp not supported (tcgen05.mma already failed)"));
-        cudaGetLastError(); // final drain
+        (void)cudaDeviceSynchronize(); // drain async IllegalInstruction
+        results.push_back(makeStubSparse("tcgen05.mma.sp not supported (dense already failed)"));
+        (void)cudaDeviceSynchronize(); // final drain
         return results;
     }
 
@@ -915,10 +877,10 @@ std::vector<BenchResult> runFP4Bench(int device, int matDim, int iterations) {
         results.push_back(measureFp4Sparse(device, matDim, iterations));
     } catch (const std::exception& ex) {
         results.push_back(makeStubSparse((std::string("exception: ") + ex.what()).c_str()));
-        cudaGetLastError(); // drain
+        (void)cudaDeviceSynchronize(); // drain async IllegalInstruction
     }
 
-    cudaGetLastError(); // final drain of any pending state
+    (void)cudaDeviceSynchronize(); // final drain
     return results;
 }
 

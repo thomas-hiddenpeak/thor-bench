@@ -145,52 +145,6 @@ BenchResult measureFP8Dense(int device, int matDim, int iterations) {
 // ── FP8 2:4 Sparse GEMM via tcgen05.mma.sp ─────────────────────────────────
 // ════════════════════════════════════════════════════════════════════════════
 
-// Probe kernel: test tcgen05.mma.sp support
-__global__ void fp8ScalarSparseProbeKernel() {
-    uint32_t tmemHandleSmem;
-    uint32_t nCols = 8;
-    uint32_t smemTmemPtr = static_cast<uint32_t>(__cvta_generic_to_shared(&tmemHandleSmem));
-    asm volatile(
-        "tcgen05.alloc.cta_group::1.sync.aligned.shared::cta.b32 [%0], %1;"
-        : : "r"(smemTmemPtr), "r"(nCols) : "memory");
-    asm volatile("tcgen05.relinquish_alloc_permit.cta_group::1.sync.aligned;" ::: "memory");
-    uint64_t aDesc = 0, bDesc = 0;
-    uint32_t idesc = 0;
-    uint32_t tmemHandle = tmemHandleSmem;
-    uint32_t ePtrSmem = 0;
-    asm volatile(
-        "{.reg .pred p;\n\t"
-        "setp.ne.b32 p, 0, 0;\n\t"
-        "tcgen05.mma.sp.cta_group::1.kind::f8f6f4 "
-        "[%0], %1, %2, [%4], %3, p;}\n"
-        : : "r"(tmemHandle), "l"(aDesc), "l"(bDesc), "r"(idesc), "r"(ePtrSmem)
-        : "memory"
-    );
-}
-
-static bool fp8ScalarSparseSupported(int device) {
-    chk(cudaSetDevice(device), "probe_dev");
-    int major = 0, minor = 0;
-    chk(cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, device), "major");
-    chk(cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, device), "minor");
-    if (major < 11) return false;
-    cudaStream_t str;
-    chk(cudaStreamCreate(&str), "probe_stream");
-    fp8ScalarSparseProbeKernel<<<1, 32, 0, str>>>();
-    cudaError_t e = cudaStreamSynchronize(str);
-    chk(cudaStreamDestroy(str), "probe_stream_destroy");
-    if (e != cudaSuccess) {
-        cudaGetLastError(); // drain IllegalInstruction from probe
-        return false;
-    }
-    e = cudaGetLastError();
-    if (e != cudaSuccess) {
-        cudaGetLastError(); // drain
-        return false;
-    }
-    return true;
-}
-
 constexpr int spFp8ScalarTileM = 16;
 constexpr int spFp8ScalarTileN = 16;
 constexpr int spFp8ScalarTileK = 16;
@@ -203,8 +157,8 @@ __device__ static uint64_t buildFp8ScalarSmemDesc(const void* ptr, int leadingDi
     uint64_t strideBytes  = static_cast<uint64_t>(strideDim) * elemBytes;
     uint64_t desc = 0;
     desc  = (base >> 4) & 0x3FFF;
-    desc |= ((leadingBytes >> 4) & 0x3FFF) << 16;
-    desc |= ((strideBytes >> 4)  & 0x3FFF) << 32;
+    desc |= (leadingBytes & 0x3FFF) << 16;
+    desc |= (strideBytes & 0x3FFF) << 32;
     desc |= (1ULL) << 46;
     desc |= (0ULL) << 49;
     desc |= (0ULL) << 52;
@@ -517,34 +471,22 @@ std::vector<BenchResult> runFP8ScalarBench(int device, int matDim, int iteration
     }
 
     // --- FP8 Sparse ---
-    // Probe tcgen05 support first; fallback to stub if unsupported
     try {
-        if (!fp8ScalarSparseSupported(device)) {
-            BenchResult r{};
-            r.suite_name = "fp8_scalar";
-            r.test_name  = "fp8_scalar_sparse";
-            r.unit       = "TFLOP/s";
-            r.sample_count = 0;
-            r.warmup_count = 0;
-            r.median = 0.0;
-            r.params_json = "{\"note\":\"tcgen05.mma.sp.kind::f8f6f4 not supported by current driver/firmware\"}";
-            r.metadata["stub"] = "true";
-            r.metadata["stub_reason"] = "tcgen05.mma.sp.kind::f8f6f4 not supported by current driver/firmware";
-            r.metadata["peak_sparse_tflops"] = std::to_string(static_cast<int>(T5000Peaks::fp8_sparse_tflops));
-            results.push_back(r);
-        } else {
-            results.push_back(measureFP8Sparse(device, matDim, iterations));
-        }
+        results.push_back(measureFP8Sparse(device, matDim, iterations));
     } catch (const std::exception& ex) {
         BenchResult r{};
         r.suite_name = "fp8_scalar";
         r.test_name  = "fp8_scalar_sparse";
         r.unit       = "TFLOP/s";
+        r.sample_count = 0;
         std::string err = "{\"error\":\"";
         err += ex.what();
         err += "\"}";
         r.params_json = err;
         r.metadata["peak_sparse_tflops"] = std::to_string(static_cast<int>(T5000Peaks::fp8_sparse_tflops));
+        // IllegalInstruction is device-level poison; cudaDeviceSynchronize()
+        // always returns it. Just return the stub — benchmark_main will detect
+        // IllegalInstruction on its own sync and break the suite loop.
         results.push_back(r);
     }
 
