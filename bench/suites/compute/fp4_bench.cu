@@ -343,7 +343,7 @@ BenchResult measureFp4Dense(int device, int matDim, int iterations) {
 
     // Warmup (probe + warmup: first launch checks tcgen05 support at runtime)
     {
-        fp4Nvf4GemmKernel<<<grid.x, 32, smemBytes, str>>>(
+        fp4Nvf4GemmKernel<<<grid, 32, smemBytes, str>>>(
             dA_fp4, dScaleA, dB_fp4, dScaleB, dC, M, N, K);
         cudaError_t e = cudaStreamSynchronize(str);
         if (e != cudaSuccess) {
@@ -360,7 +360,7 @@ BenchResult measureFp4Dense(int device, int matDim, int iterations) {
         }
     }
     for (int w = 0; w < 2; ++w) {
-        fp4Nvf4GemmKernel<<<grid.x, 32, smemBytes, str>>>(
+        fp4Nvf4GemmKernel<<<grid, 32, smemBytes, str>>>(
             dA_fp4, dScaleA, dB_fp4, dScaleB, dC, M, N, K);
         chk(cudaStreamSynchronize(str), "warmup");
     }
@@ -375,7 +375,7 @@ BenchResult measureFp4Dense(int device, int matDim, int iterations) {
 
     for (int i = 0; i < iterations; ++i) {
         chk(cudaEventRecord(evS, str), "recS");
-        fp4Nvf4GemmKernel<<<grid.x, 32, smemBytes, str>>>(
+        fp4Nvf4GemmKernel<<<grid, 32, smemBytes, str>>>(
             dA_fp4, dScaleA, dB_fp4, dScaleB, dC, M, N, K);
         chk(cudaEventRecord(evE, str), "recE");
         chk(cudaStreamSynchronize(str), "sync");
@@ -775,7 +775,7 @@ BenchResult measureFp4Sparse(int device, int matDim, int iterations) {
 
     // Warmup
     for (int w = 0; w < 3; ++w) {
-        fp4Nvf4SparseGemmKernel<<<grid.x, 32, smemBytes, str>>>(
+        fp4Nvf4SparseGemmKernel<<<grid, 32, smemBytes, str>>>(
             dA_fp4_sparse, dScaleA, dE, dB_fp4, dScaleB, dC, M, N, K);
         chk(cudaStreamSynchronize(str), "warmup");
     }
@@ -791,7 +791,7 @@ BenchResult measureFp4Sparse(int device, int matDim, int iterations) {
 
     for (int i = 0; i < iterations; ++i) {
         chk(cudaEventRecord(evS, str), "recS");
-        fp4Nvf4SparseGemmKernel<<<grid.x, 32, smemBytes, str>>>(
+        fp4Nvf4SparseGemmKernel<<<grid, 32, smemBytes, str>>>(
             dA_fp4_sparse, dScaleA, dE, dB_fp4, dScaleB, dC, M, N, K);
         chk(cudaEventRecord(evE, str), "recE");
         chk(cudaStreamSynchronize(str), "sync");

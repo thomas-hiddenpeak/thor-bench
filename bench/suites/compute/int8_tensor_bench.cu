@@ -310,7 +310,7 @@ BenchResult measureInt8Dense(int device, int matDim, int iterations) {
 
     // Warmup
     for (int w = 0; w < 3; ++w) {
-        int8MmaKernel<<<grid.x, 32, smemBytes, str>>>(dA, dB, dC, M, N, K);
+        int8MmaKernel<<<grid, 32, smemBytes, str>>>(dA, dB, dC, M, N, K);
         chk(cudaStreamSynchronize(str), "warmup");
     }
 
@@ -325,7 +325,7 @@ BenchResult measureInt8Dense(int device, int matDim, int iterations) {
 
     for (int i = 0; i < iterations; ++i) {
         chk(cudaEventRecord(evS, str), "recS");
-        int8MmaKernel<<<grid.x, 32, smemBytes, str>>>(dA, dB, dC, M, N, K);
+        int8MmaKernel<<<grid, 32, smemBytes, str>>>(dA, dB, dC, M, N, K);
         chk(cudaEventRecord(evE, str), "recE");
         chk(cudaStreamSynchronize(str), "sync");
 

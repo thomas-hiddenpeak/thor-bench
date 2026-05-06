@@ -533,7 +533,7 @@ BenchResult measureFP8Sparse(int device, int matDim, int iterations) {
 
     // Warmup
     for (int w = 0; w < 3; ++w) {
-        fp8SparseMmaKernel<<<grid.x, 32, smemBytes, str>>>(
+        fp8SparseMmaKernel<<<grid, 32, smemBytes, str>>>(
             dA_sparse, dE, dB, dC, M, N, K);
         chk(cudaStreamSynchronize(str), "warmup");
     }
@@ -544,7 +544,7 @@ BenchResult measureFP8Sparse(int device, int matDim, int iterations) {
 
     for (int i = 0; i < iterations; ++i) {
         chk(cudaEventRecord(evS, str), "rs");
-        fp8SparseMmaKernel<<<grid.x, 32, smemBytes, str>>>(
+        fp8SparseMmaKernel<<<grid, 32, smemBytes, str>>>(
             dA_sparse, dE, dB, dC, M, N, K);
         chk(cudaEventRecord(evE, str), "re");
         chk(cudaStreamSynchronize(str), "sy");

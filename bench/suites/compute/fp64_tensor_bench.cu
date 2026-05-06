@@ -320,7 +320,7 @@ BenchResult measureFP64Dense(int device, int matDim, int iterations) {
 
     // Warmup
     for (int w = 0; w < 3; ++w) {
-        fp64DmmaKernel<<<grid.x, 32, 0, str>>>(dA, dB, dC, M, N, K);
+        fp64DmmaKernel<<<grid, 32, 0, str>>>(dA, dB, dC, M, N, K);
         chk(cudaStreamSynchronize(str), "warmup");
     }
 
@@ -335,7 +335,7 @@ BenchResult measureFP64Dense(int device, int matDim, int iterations) {
 
     for (int i = 0; i < iterations; ++i) {
         chk(cudaEventRecord(evS, str), "recS");
-        fp64DmmaKernel<<<grid.x, 32, 0, str>>>(dA, dB, dC, M, N, K);
+        fp64DmmaKernel<<<grid, 32, 0, str>>>(dA, dB, dC, M, N, K);
         chk(cudaEventRecord(evE, str), "recE");
         chk(cudaStreamSynchronize(str), "sync");
 
