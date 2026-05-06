@@ -71,6 +71,15 @@ add_executable(thor_bench
 )
 
 # ── CUPTI (optional) ──────────────────────────────────────────────────────
+find_library(NVJPEG_LIB nvjpeg
+    PATHS /usr/local/cuda-13.0/targets/sbsa-linux/lib
+          /usr/local/cuda/targets/sbsa-linux/lib
+          /usr/local/cuda/lib64
+          /usr/local/cuda/lib
+          /usr/lib/aarch64-linux-gnu
+    PATH_SUFFIXES lib lib64 targets/sbsa-linux/lib
+)
+
 find_library(CUPTI_LIB cupti
     HINTS ${CUDA_TOOLKIT_ROOT_DIR}/targets/sbsa-linux/lib
           ${CUDA_TOOLKIT_ROOT_DIR}/lib64
@@ -106,6 +115,7 @@ target_link_libraries(thor_bench PRIVATE
     CUDA::cuda_driver
     CUDA::cublasLt
     CUDA::cublas
+    ${NVJPEG_LIB}
 )
 
 set_target_properties(thor_bench PROPERTIES
