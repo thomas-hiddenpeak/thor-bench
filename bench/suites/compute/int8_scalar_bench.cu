@@ -1,4 +1,4 @@
-#include "compute/int8_tensor_bench.h"
+#include "compute/int8_scalar_bench.h"
 #include "bench_schema.h"
 #include "bench_suites.h"
 #include "bench_peaks.h"
@@ -143,8 +143,8 @@ BenchResult measureINT8Dense(int device, int matDim, int iterations) {
     p << "{\"M\":" << M << ",\"N\":" << N << ",\"K\":" << K
       << ",\"tile\":" << kTile << ",\"type\":\"scalar_int8_kernel\"}";
 
-    BenchResult res = computeStats(vals, "int8_tensor", "int8_tensor_dense",
-                                    "TOP/s", p.str());
+    BenchResult res = computeStats(vals, "int8_scalar", "int8_scalar_dense",
+                                     "TOP/s", p.str());
     res.metadata["note"] = "scalar INT8 kernel with int32 accumulate; tcgen05.mma kind::i8 PTX requires SMEM descriptors + TMEM alloc";
 
     chk(cudaFree(dA), "fa");
@@ -162,8 +162,8 @@ BenchResult measureINT8Dense(int device, int matDim, int iterations) {
 BenchResult measureINT8Sparse(int device, int matDim, int iterations) {
     (void)device; (void)matDim; (void)iterations;
     BenchResult res{};
-    res.suite_name = "int8_tensor";
-    res.test_name  = "int8_tensor_sparse";
+    res.suite_name = "int8_scalar";
+    res.test_name  = "int8_scalar_sparse";
     res.unit       = "TOP/s";
     res.sample_count = 0;
     res.warmup_count = 0;
@@ -175,7 +175,7 @@ BenchResult measureINT8Sparse(int device, int matDim, int iterations) {
 
 } // anonymous namespace
 
-std::vector<BenchResult> runINT8TensorBench(int device, int matDim, int iterations) {
+std::vector<BenchResult> runINT8ScalarBench(int device, int matDim, int iterations) {
     std::vector<BenchResult> results;
 
     // --- INT8 Dense ---
@@ -183,8 +183,8 @@ std::vector<BenchResult> runINT8TensorBench(int device, int matDim, int iteratio
         results.push_back(measureINT8Dense(device, matDim, iterations));
     } catch (const std::exception& ex) {
         BenchResult r{};
-        r.suite_name = "int8_tensor";
-        r.test_name  = "int8_tensor_dense";
+        r.suite_name = "int8_scalar";
+        r.test_name  = "int8_scalar_dense";
         r.unit       = "TOP/s";
         std::string err = "{\"error\":\"";
         err += ex.what();
@@ -198,8 +198,8 @@ std::vector<BenchResult> runINT8TensorBench(int device, int matDim, int iteratio
         results.push_back(measureINT8Sparse(device, matDim, iterations));
     } catch (const std::exception& ex) {
         BenchResult r{};
-        r.suite_name = "int8_tensor";
-        r.test_name  = "int8_tensor_sparse";
+        r.suite_name = "int8_scalar";
+        r.test_name  = "int8_scalar_sparse";
         r.unit       = "TOP/s";
         std::string err = "{\"error\":\"";
         err += ex.what();
@@ -213,7 +213,7 @@ std::vector<BenchResult> runINT8TensorBench(int device, int matDim, int iteratio
 
 } // namespace deusridet::bench
 
-BENCH_REGISTER_SUITE(int8_tensor, "INT8 Tensor Core throughput via tcgen05.mma",
+BENCH_REGISTER_SUITE(int8_scalar, "Scalar INT8 GEMM (no Tensor Core — ~0.04% of peak)",
     [](deusridet::bench::BenchRunner& runner) -> std::vector<deusridet::bench::BenchResult> {
-        return deusridet::bench::runINT8TensorBench(0, 512, 10);
+        return deusridet::bench::runINT8ScalarBench(0, 512, 10);
     });

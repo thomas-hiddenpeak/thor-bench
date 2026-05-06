@@ -5,6 +5,6 @@
 
 namespace deusridet::bench {
 
-std::vector<BenchResult> runINT8TensorBench(int device, int matDim, int iterations);
+std::vector<BenchResult> runINT8ScalarBench(int device, int matDim, int iterations);
 
 }
