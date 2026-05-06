@@ -158,6 +158,11 @@ std::vector<BenchResult> runArmComputeBench(int threadCount, int iterations) {
             ps << "{\"threads\":" << threadCount << ",\"iterations\":" << iterations << "}";
             r.params_json = ps.str();
         }
+        r.metadata["vector_unit"] = "scalar";
+        if (c.label == "sine_loop") r.metadata["operation"] = "sine";
+        else if (c.label == "sqrt_loop") r.metadata["operation"] = "sqrt";
+        else r.metadata["operation"] = "matmul";
+        r.metadata["thread_count"] = std::to_string(threadCount);
         results.push_back(std::move(r));
     }
 

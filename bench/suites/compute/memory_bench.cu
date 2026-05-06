@@ -132,6 +132,10 @@ BenchResult measure(const char* label, double byteMult,
       << ",\"grid\":" << gridX
       << ",\"tpb\":" << kTpb << "}";
     res.params_json = p.str();
+    if (label[8] == 'r') res.metadata["access_pattern"] = "read";
+    else if (label[8] == 'w') res.metadata["access_pattern"] = "write";
+    else res.metadata["access_pattern"] = "copy";
+    res.metadata["memory_type"] = "device";
     return res;
 }
 
@@ -212,6 +216,8 @@ BenchResult measureSharedMem(size_t numElems, int gridX, int iters,
       << ",\"rounds\":" << kRounds
       << ",\"grid\":" << gridX << "}";
     res.params_json = p.str();
+    res.metadata["access_pattern"] = "shared_crossbar";
+    res.metadata["memory_type"] = "shared";
     return res;
 }
 
@@ -268,6 +274,10 @@ std::vector<BenchResult> runMemoryBench(int device, size_t transferSize, int ite
             r.test_name  = td.label;
             r.unit       = "GB/s";
             r.peak_pct   = 0.0;
+            if (td.label[8] == 'r') r.metadata["access_pattern"] = "read";
+            else if (td.label[8] == 'w') r.metadata["access_pattern"] = "write";
+            else r.metadata["access_pattern"] = "copy";
+            r.metadata["memory_type"] = "device";
             std::string err = "{\"error\":\"";
             err += ex.what();
             err += "\",\"bytes\":";
@@ -287,6 +297,8 @@ std::vector<BenchResult> runMemoryBench(int device, size_t transferSize, int ite
         r.test_name  = "shared_mem_crossbar";
         r.unit       = "GB/s";
         r.peak_pct   = 0.0;
+        r.metadata["access_pattern"] = "shared_crossbar";
+        r.metadata["memory_type"] = "shared";
         std::string err = "{\"error\":\"";
         err += ex.what();
         err += "\"}";

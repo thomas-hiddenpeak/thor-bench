@@ -82,6 +82,7 @@ std::vector<BenchResult> benchMallocLatency(int device, int iterations) {
         res.suite_name = "allocator_latency";
         res.test_name  = "cuda_malloc_latency";
         res.unit       = "µs";
+        res.metadata["op"] = "malloc";
 
         std::ostringstream p;
         p << "{\"sizes_b\":[4096,65536,1048576,4194304,16777216,67108864],"
@@ -150,6 +151,7 @@ std::vector<BenchResult> benchFreeLatency(int device, int iterations) {
         res.suite_name = "allocator_latency";
         res.test_name  = "cuda_free_latency";
         res.unit       = "µs";
+        res.metadata["op"] = "free";
 
         std::ostringstream p;
         p << "{\"sizes_b\":[4096,65536,1048576,4194304,16777216,67108864],"
@@ -239,6 +241,7 @@ std::vector<BenchResult> benchMallocConcurrent(int device, int iterations) {
         res.suite_name = "allocator_latency";
         res.test_name  = "cuda_malloc_concurrent";
         res.unit       = "allocs/s";
+        res.metadata["op"] = "concurrent_alloc";
 
         std::ostringstream p;
         p << "{\"num_streams\":" << NUM_STREAMS
@@ -270,6 +273,8 @@ std::vector<BenchResult> runAllocatorLatencyBench(int device, int iterations) {
         r.unit       = "µs";
         r.sample_count = 0;
         r.warmup_count = 0;
+        r.metadata["op"] = "malloc";
+        r.metadata["stub_reason"] = std::string("error: ") + ex.what();
         std::string err = "{\"error\":\"";
         err += ex.what();
         err += "\"}";
@@ -287,6 +292,8 @@ std::vector<BenchResult> runAllocatorLatencyBench(int device, int iterations) {
         r.unit       = "µs";
         r.sample_count = 0;
         r.warmup_count = 0;
+        r.metadata["op"] = "free";
+        r.metadata["stub_reason"] = std::string("error: ") + ex.what();
         std::string err = "{\"error\":\"";
         err += ex.what();
         err += "\"}";
@@ -304,6 +311,8 @@ std::vector<BenchResult> runAllocatorLatencyBench(int device, int iterations) {
         r.unit       = "allocs/s";
         r.sample_count = 0;
         r.warmup_count = 0;
+        r.metadata["op"] = "concurrent_alloc";
+        r.metadata["stub_reason"] = std::string("error: ") + ex.what();
         std::string err = "{\"error\":\"";
         err += ex.what();
         err += "\"}";

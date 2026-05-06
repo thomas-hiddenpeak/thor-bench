@@ -91,6 +91,10 @@ std::vector<BenchResult> runH264DecodeBench(int device, int width, int height, i
         r.suite_name = "h264_decode";
         r.test_name  = "dimension_exceeded";
         r.unit       = "fps";
+        r.metadata["codec"] = "h264";
+        r.metadata["resolution"] = std::to_string(width) + "x" + std::to_string(height);
+        r.metadata["decoder"] = "NVDEC";
+        r.metadata["stub_reason"] = "resolution exceeds 7680x4320";
         r.params_json = "{\"error\":\"resolution exceeds 7680x4320\"}";
         results.push_back(r);
         return results;
@@ -102,6 +106,9 @@ std::vector<BenchResult> runH264DecodeBench(int device, int width, int height, i
         r.suite_name = "h264_decode";
         r.test_name  = "device_unavailable";
         r.unit       = "fps";
+        r.metadata["codec"] = "h264";
+        r.metadata["decoder"] = "NVDEC";
+        r.metadata["stub_reason"] = "cuda device unavailable";
         r.params_json = "{\"error\":\"cuda device unavailable\"}";
         results.push_back(r);
         return results;
@@ -151,6 +158,9 @@ std::vector<BenchResult> runH264DecodeBench(int device, int width, int height, i
                << ",\"nvdec_available\":" << (nvdec ? "true" : "false") << "}";
             r.params_json = ps.str();
         }
+        r.metadata["codec"] = "h264";
+        r.metadata["resolution"] = std::to_string(c.w) + "x" + std::to_string(c.h);
+        r.metadata["decoder"] = "NVDEC";
         results.push_back(std::move(r));
     }
 

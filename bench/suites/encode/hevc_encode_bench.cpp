@@ -91,6 +91,9 @@ std::vector<BenchResult> runHEVCEncodeBench(int device, int width, int height, i
             r.test_name  = "device_unavailable";
             r.unit       = "fps";
             r.sample_count = 0;
+            r.metadata["codec"] = "hevc";
+            r.metadata["encoder"] = "NVENC";
+            r.metadata["stub_reason"] = "cuda device unavailable";
             r.params_json = "{\"error\":\"cuda device unavailable\"}";
             results.push_back(r);
             return results;
@@ -103,6 +106,9 @@ std::vector<BenchResult> runHEVCEncodeBench(int device, int width, int height, i
             r.test_name  = "nvenc_hevc_unavailable";
             r.unit       = "fps";
             r.sample_count = 0;
+            r.metadata["codec"] = "hevc";
+            r.metadata["encoder"] = "NVENC";
+            r.metadata["stub_reason"] = "NVENC HEVC not supported on this device";
             r.params_json = "{\"error\":\"NVENC HEVC encode session not supported on this device\",\"device\":" +
                             std::to_string(device) + ",\"hevc_available\":false}";
             results.push_back(r);
@@ -150,6 +156,9 @@ std::vector<BenchResult> runHEVCEncodeBench(int device, int width, int height, i
                    << ",\"nvenc_hevc_available\":true}";
                 r.params_json = ps.str();
             }
+            r.metadata["codec"] = "hevc";
+            r.metadata["resolution"] = std::to_string(c.w) + "x" + std::to_string(c.h);
+            r.metadata["encoder"] = "NVENC";
             results.push_back(std::move(r));
         }
 
@@ -159,6 +168,9 @@ std::vector<BenchResult> runHEVCEncodeBench(int device, int width, int height, i
         r.test_name  = "error";
         r.unit       = "fps";
         r.sample_count = 0;
+        r.metadata["codec"] = "hevc";
+        r.metadata["encoder"] = "NVENC";
+        r.metadata["stub_reason"] = std::string("error: ") + e.what();
         r.params_json = std::string("{\"error\":\"") + e.what() + "\"}";
         results.push_back(r);
     } catch (...) {
@@ -167,6 +179,9 @@ std::vector<BenchResult> runHEVCEncodeBench(int device, int width, int height, i
         r.test_name  = "error";
         r.unit       = "fps";
         r.sample_count = 0;
+        r.metadata["codec"] = "hevc";
+        r.metadata["encoder"] = "NVENC";
+        r.metadata["stub_reason"] = "unknown exception during HEVC encode benchmark";
         r.params_json = "{\"error\":\"unknown exception during HEVC encode benchmark\"}";
         results.push_back(r);
     }

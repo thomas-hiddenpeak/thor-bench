@@ -108,6 +108,8 @@ BenchResult measureRead(const char* label, float* dSrc, float* dDst,
       << ",\"grid\":" << gridX
       << ",\"tpb\":" << kTpb << "}";
     res.params_json = p.str();
+    res.metadata["access_pattern"] = "sequential";
+    res.metadata["cache_level"] = "L2";
     return res;
 }
 
@@ -144,6 +146,8 @@ BenchResult measureStridedRead(float* dSrc, float* dDst,
       << ",\"grid\":" << gridX
       << ",\"tpb\":" << kTpb << "}";
     res.params_json = p.str();
+    res.metadata["access_pattern"] = "strided";
+    res.metadata["cache_level"] = "L2";
     return res;
 }
 
@@ -175,6 +179,8 @@ BenchResult measureRandomRead(float* dSrc, float* dDst,
       << ",\"grid\":" << gridX
       << ",\"tpb\":" << kTpb << "}";
     res.params_json = p.str();
+    res.metadata["access_pattern"] = "random";
+    res.metadata["cache_level"] = "L2";
     return res;
 }
 
@@ -207,6 +213,8 @@ BenchResult measureWrite(float* dDst,
       << ",\"grid\":" << gridX
       << ",\"tpb\":" << kTpb << "}";
     res.params_json = p.str();
+    res.metadata["access_pattern"] = "write";
+    res.metadata["cache_level"] = "L2";
     return res;
 }
 
@@ -266,6 +274,9 @@ std::vector<BenchResult> runL2CacheBench(int device, int iterations) {
             r.unit       = "GB/s";
             r.peak_pct   = 0.0;
             r.sample_count = 0;
+            r.metadata["access_pattern"] = "sequential";
+            r.metadata["cache_level"] = "L2";
+            r.metadata["stub_reason"] = std::string("error: ") + ex.what();
             std::string err = "{\"error\":\"";
             err += ex.what();
             err += "\",\"bytes\":";
@@ -287,6 +298,9 @@ std::vector<BenchResult> runL2CacheBench(int device, int iterations) {
             r.unit       = "GB/s";
             r.peak_pct   = 0.0;
             r.sample_count = 0;
+            r.metadata["access_pattern"] = "strided";
+            r.metadata["cache_level"] = "L2";
+            r.metadata["stub_reason"] = std::string("error: ") + ex.what();
             std::string err = "{\"error\":\"";
             err += ex.what();
             err += "\",\"bytes\":";
@@ -308,6 +322,9 @@ std::vector<BenchResult> runL2CacheBench(int device, int iterations) {
             r.unit       = "GB/s";
             r.peak_pct   = 0.0;
             r.sample_count = 0;
+            r.metadata["access_pattern"] = "random";
+            r.metadata["cache_level"] = "L2";
+            r.metadata["stub_reason"] = std::string("error: ") + ex.what();
             std::string err = "{\"error\":\"";
             err += ex.what();
             err += "\",\"bytes\":";
@@ -329,6 +346,9 @@ std::vector<BenchResult> runL2CacheBench(int device, int iterations) {
             r.unit       = "GB/s";
             r.peak_pct   = 0.0;
             r.sample_count = 0;
+            r.metadata["access_pattern"] = "write";
+            r.metadata["cache_level"] = "L2";
+            r.metadata["stub_reason"] = std::string("error: ") + ex.what();
             std::string err = "{\"error\":\"";
             err += ex.what();
             err += "\",\"bytes\":";
@@ -352,14 +372,21 @@ std::vector<BenchResult> runL2CacheBench(int device, int iterations) {
         if (str) chk(cudaStreamDestroy(str), "ds_err");
 
         // Push failure results for each test
-        const char* tests[] = {"l2_sequential_read", "l2_strided_read", "l2_random_read", "l2_write"};
-        for (const char* t : tests) {
+        struct L2Fail { const char* name; const char* pattern; };
+        const L2Fail tests[] = {
+            {"l2_sequential_read", "sequential"}, {"l2_strided_read", "strided"},
+            {"l2_random_read", "random"}, {"l2_write", "write"},
+        };
+        for (const auto& t : tests) {
             BenchResult r;
             r.suite_name = "l2_cache";
-            r.test_name  = t;
+            r.test_name  = t.name;
             r.unit       = "GB/s";
             r.peak_pct   = 0.0;
             r.sample_count = 0;
+            r.metadata["access_pattern"] = t.pattern;
+            r.metadata["cache_level"] = "L2";
+            r.metadata["stub_reason"] = std::string("error: ") + ex.what();
             std::string err = "{\"error\":\"";
             err += ex.what();
             err += "\",\"bytes\":";

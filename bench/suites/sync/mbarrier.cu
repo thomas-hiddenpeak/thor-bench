@@ -100,6 +100,9 @@ BenchResult benchMbarrier(int threads, int burns, int iterations) {
         r.unit       = "ns";
         r.sample_count = 0;
         r.warmup_count = 0;
+        r.metadata["sync_primitive"] = "mbarrier";
+        r.metadata["thread_count"] = std::to_string(threads);
+        r.metadata["stub_reason"] = "no samples collected";
         return r;
     }
 
@@ -107,6 +110,8 @@ BenchResult benchMbarrier(int threads, int burns, int iterations) {
     res.suite_name = "mbarrier";
     res.test_name  = "mbarrier_" + std::to_string(threads) + "threads";
     res.unit       = "ns";
+    res.metadata["sync_primitive"] = "mbarrier";
+    res.metadata["thread_count"] = std::to_string(threads);
 
     std::ostringstream p;
     p << "{\"threads\":" << threads
@@ -158,6 +163,9 @@ BenchResult benchSyncthreadsBaseline(int threads, int burns, int iterations) {
         r.unit       = "ns";
         r.sample_count = 0;
         r.warmup_count = 0;
+        r.metadata["sync_primitive"] = "syncthreads";
+        r.metadata["thread_count"] = std::to_string(threads);
+        r.metadata["stub_reason"] = "no samples collected";
         return r;
     }
 
@@ -165,6 +173,8 @@ BenchResult benchSyncthreadsBaseline(int threads, int burns, int iterations) {
     res.suite_name = "mbarrier";
     res.test_name  = "syncthreads_" + std::to_string(threads) + "threads";
     res.unit       = "ns";
+    res.metadata["sync_primitive"] = "syncthreads";
+    res.metadata["thread_count"] = std::to_string(threads);
 
     std::ostringstream p;
     p << "{\"threads\":" << threads
@@ -192,6 +202,9 @@ std::vector<BenchResult> runMBarrierBench(int device, int iterations) {
             r.suite_name = "mbarrier";
             r.test_name  = "mbarrier_" + std::to_string(threads) + "threads";
             r.unit       = "ns";
+            r.metadata["sync_primitive"] = "mbarrier";
+            r.metadata["thread_count"] = std::to_string(threads);
+            r.metadata["stub_reason"] = std::string("error: ") + ex.what();
             std::string err = "{\"error\":\"";
             err += ex.what();
             err += "\",\"threads\":" + std::to_string(threads) + "}";
@@ -208,6 +221,9 @@ std::vector<BenchResult> runMBarrierBench(int device, int iterations) {
         r.suite_name = "mbarrier";
         r.test_name  = "syncthreads_256threads";
         r.unit       = "ns";
+        r.metadata["sync_primitive"] = "syncthreads";
+        r.metadata["thread_count"] = "256";
+        r.metadata["stub_reason"] = std::string("error: ") + ex.what();
         std::string err = "{\"error\":\"";
         err += ex.what();
         err += "\",\"threads\":256}";

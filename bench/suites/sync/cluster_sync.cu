@@ -82,6 +82,9 @@ BenchResult benchSyncthreads(int threads, int burns, int iterations, double cloc
         r.unit = "ns";
         r.sample_count = 0;
         r.warmup_count = 0;
+        r.metadata["sync_primitive"] = "syncthreads";
+        r.metadata["thread_count"] = std::to_string(threads);
+        r.metadata["stub_reason"] = "no samples collected";
         return r;
     }
 
@@ -89,6 +92,8 @@ BenchResult benchSyncthreads(int threads, int burns, int iterations, double cloc
     res.suite_name = "cluster_sync";
     res.test_name  = "syncthreads_" + std::to_string(threads) + "threads";
     res.unit       = "ns";
+    res.metadata["sync_primitive"] = "syncthreads";
+    res.metadata["thread_count"] = std::to_string(threads);
 
     std::ostringstream p;
     p << "{\"threads\":" << threads
@@ -162,6 +167,9 @@ BenchResult benchClusterBarrier(int burns, int iterations) {
         r.unit       = "ns";
         r.sample_count = 0;
         r.warmup_count = 0;
+        r.metadata["sync_primitive"] = "cluster_barrier";
+        r.metadata["cluster_mode"] = "true";
+        r.metadata["stub_reason"] = "no samples collected";
         return r;
     }
 
@@ -169,6 +177,8 @@ BenchResult benchClusterBarrier(int burns, int iterations) {
     res.suite_name = "cluster_sync";
     res.test_name  = "cluster_barrier_2SM";
     res.unit       = "ns";
+    res.metadata["sync_primitive"] = "cluster_barrier";
+    res.metadata["cluster_mode"] = "true";
 
     std::ostringstream p;
     p << "{\"burns\":" << burns
@@ -202,6 +212,9 @@ std::vector<BenchResult> runClusterSyncBench(int device, int iterations) {
             r.suite_name = "cluster_sync";
             r.test_name  = "syncthreads_" + std::to_string(threads) + "threads";
             r.unit       = "ns";
+            r.metadata["sync_primitive"] = "syncthreads";
+            r.metadata["thread_count"] = std::to_string(threads);
+            r.metadata["stub_reason"] = std::string("error: ") + ex.what();
             std::string err = "{\"error\":\"";
             err += ex.what();
             err += "\",\"threads\":" + std::to_string(threads) + "}";
@@ -219,6 +232,9 @@ std::vector<BenchResult> runClusterSyncBench(int device, int iterations) {
             r.suite_name = "cluster_sync";
             r.test_name  = "cluster_barrier_2SM";
             r.unit       = "ns";
+            r.metadata["sync_primitive"] = "cluster_barrier";
+            r.metadata["cluster_mode"] = "true";
+            r.metadata["stub_reason"] = std::string("error: ") + ex.what();
             std::string err = "{\"error\":\"";
             err += ex.what();
             err += "\",\"blocks\":2}";

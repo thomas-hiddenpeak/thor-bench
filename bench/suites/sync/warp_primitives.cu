@@ -107,6 +107,8 @@ BenchResult benchWarpPrimitive(const char* testName, KernelFn kernel, int grid,
         r.unit       = "ns";
         r.sample_count = 0;
         r.warmup_count = 0;
+        r.metadata["primitive"] = testName;
+        r.metadata["stub_reason"] = "allocation exceeds 256 MB limit";
         r.params_json = "{\"error\":\"allocation exceeds 256 MB limit\",\"grid\":" +
             std::to_string(grid) + ",\"threads\":" + std::to_string(threads) + "}";
         return r;
@@ -153,6 +155,8 @@ BenchResult benchWarpPrimitive(const char* testName, KernelFn kernel, int grid,
         r.unit       = "ns";
         r.sample_count = 0;
         r.warmup_count = 0;
+        r.metadata["primitive"] = testName;
+        r.metadata["stub_reason"] = "no samples collected";
         return r;
     }
 
@@ -160,6 +164,7 @@ BenchResult benchWarpPrimitive(const char* testName, KernelFn kernel, int grid,
     res.suite_name = "warp_primitives";
     res.test_name  = testName;
     res.unit       = "ns";
+    res.metadata["primitive"] = testName;
 
     std::ostringstream p;
     p << "{\"grid\":" << grid
@@ -188,6 +193,8 @@ std::vector<BenchResult> runWarpPrimitivesBench(int device, int iterations) {
         r.unit       = "ns";
         r.sample_count = 0;
         r.warmup_count = 0;
+        r.metadata["primitive"] = "shfl_sync";
+        r.metadata["stub_reason"] = "unsupported warp size";
         r.params_json = "{\"error\":\"unsupported warp size\",\"warp_size\":" +
             std::to_string(warpSize) + "}";
         results.push_back(r);
@@ -213,6 +220,8 @@ std::vector<BenchResult> runWarpPrimitivesBench(int device, int iterations) {
         r.suite_name = "warp_primitives";
         r.test_name  = "__shfl_sync_broadcast";
         r.unit       = "ns";
+        r.metadata["primitive"] = "shfl_sync";
+        r.metadata["stub_reason"] = std::string("error: ") + ex.what();
         std::string err = "{\"error\":\"";
         err += ex.what();
         err += "\",\"grid\":" + std::to_string(maxGrid) + ",\"threads\":" + std::to_string(threads) + "}";
@@ -232,6 +241,8 @@ std::vector<BenchResult> runWarpPrimitivesBench(int device, int iterations) {
         r.suite_name = "warp_primitives";
         r.test_name  = "__vote_sync_all_any";
         r.unit       = "ns";
+        r.metadata["primitive"] = "vote_sync";
+        r.metadata["stub_reason"] = std::string("error: ") + ex.what();
         std::string err = "{\"error\":\"";
         err += ex.what();
         err += "\",\"grid\":" + std::to_string(maxGrid) + ",\"threads\":" + std::to_string(threads) + "}";
@@ -251,6 +262,8 @@ std::vector<BenchResult> runWarpPrimitivesBench(int device, int iterations) {
         r.suite_name = "warp_primitives";
         r.test_name  = "__match_any_sync";
         r.unit       = "ns";
+        r.metadata["primitive"] = "match_any_sync";
+        r.metadata["stub_reason"] = std::string("error: ") + ex.what();
         std::string err = "{\"error\":\"";
         err += ex.what();
         err += "\",\"grid\":" + std::to_string(maxGrid) + ",\"threads\":" + std::to_string(threads) + "}";
@@ -270,6 +283,8 @@ std::vector<BenchResult> runWarpPrimitivesBench(int device, int iterations) {
         r.suite_name = "warp_primitives";
         r.test_name  = "__ballot_sync";
         r.unit       = "ns";
+        r.metadata["primitive"] = "ballot_sync";
+        r.metadata["stub_reason"] = std::string("error: ") + ex.what();
         std::string err = "{\"error\":\"";
         err += ex.what();
         err += "\",\"grid\":" + std::to_string(maxGrid) + ",\"threads\":" + std::to_string(threads) + "}";
