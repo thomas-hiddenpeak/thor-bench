@@ -49,23 +49,6 @@ __global__ void tcgen05FP16Kernel(__half* __restrict__ A, __half* __restrict__ B
 // We dispatch the FP16 WMMA kernel to exercise the same tcgen05 hardware path.
 // Throughput measurement is valid; numeric results are not comparable.
 
-// ── Stats helpers ──────────────────────────────────────────────────────────
-BenchResult computeStats(const std::vector<double>& vals,
-                         const std::string& suite, const std::string& test,
-                         const std::string& unit, const std::string& pj,
-                         double peakTflops = 0.0) {
-    std::vector<double> sv = vals;
-    BenchResult res = ::deusridet::bench::computeStats(sv, 3);
-    res.suite_name = suite;
-    res.test_name  = test;
-    res.unit       = unit;
-    res.params_json = pj;
-    if (peakTflops > 0.0) {
-        res.peak_pct = computePeakPctFromT(res.median, peakTflops);
-    }
-    return res;
-}
-
 // ── Measure FP16 ───────────────────────────────────────────────────────────
 BenchResult measureFP16(__half* dA, __half* dB, __half* dC, int M, int N, int K,
                          dim3 grid, int tpb, double tfl, int iters,
@@ -84,7 +67,12 @@ BenchResult measureFP16(__half* dA, __half* dB, __half* dC, int M, int N, int K,
     std::ostringstream p;
     p << "{\"M\":" << M << ",\"N\":" << N << ",\"K\":" << K
       << ",\"gx\":" << grid.x << ",\"gy\":" << grid.y << ",\"tpb\":" << tpb << "}";
-    return computeStats(vals, "tcgen05_fp16", "tcgen05_fp16_dense", "TFLOP/s", p.str());
+    BenchResult res = ::deusridet::bench::computeStats(vals, 3);
+    res.suite_name = "tcgen05_fp16";
+    res.test_name  = "tcgen05_fp16_dense";
+    res.unit       = "TFLOP/s";
+    res.params_json = p.str();
+    return res;
 }
 
 // ── Measure BF16 (via FP16 reinterpret) ────────────────────────────────────
@@ -109,8 +97,11 @@ BenchResult measureBF16(__nv_bfloat16* dA, __nv_bfloat16* dB, float* dC,
     std::ostringstream p;
     p << "{\"M\":" << M << ",\"N\":" << N << ",\"K\":" << K
       << ",\"gx\":" << grid.x << ",\"gy\":" << grid.y << ",\"tpb\":" << tpb << "}";
-    BenchResult res = computeStats(vals, "tcgen05_fp16", "tcgen05_bf16_dense",
-                                    "TFLOP/s", p.str());
+    BenchResult res = ::deusridet::bench::computeStats(vals, 3);
+    res.suite_name = "tcgen05_fp16";
+    res.test_name  = "tcgen05_bf16_dense";
+    res.unit       = "TFLOP/s";
+    res.params_json = p.str();
     res.metadata["approach"] = "bf16_data_reinterpreted_as_fp16_for_wmma";
     res.metadata["note"] = "nvcuda::wmma compiles to tcgen05.mma on SM110a; bf16 memory layout same as fp16";
     res.peak_pct = std::nullopt; // BF16 peak not specified in T5000 datasheet

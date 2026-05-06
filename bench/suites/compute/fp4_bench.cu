@@ -344,23 +344,7 @@ __global__ void fp4Nvf4GemmKernel(
     }
 }
 
-// ── Stats helper ───────────────────────────────────────────────────────────
-BenchResult computeStats(const std::vector<double>& vals,
-                         const std::string& suite, const std::string& test,
-                         const std::string& unit, const std::string& pj) {
-    std::vector<double> sv = vals;
-    BenchResult res = ::deusridet::bench::computeStats(sv, 3);
-    res.suite_name = suite;
-    res.test_name  = test;
-    res.unit       = unit;
-    res.params_json = pj;
-    if (!sv.empty()) {
-        res.peak_pct = computePeakPctFromT(res.median, T5000Peaks::fp4_dense_tflops);
-    }
-    return res;
-}
-
-// ── Measure FP4 NVFP4 Dense GEMM ───────────────────────────────────────────
+// ── Measure FP4 NVFP4 Dense GEMM ────────────────────────────────────────────
 BenchResult measureFp4Dense(int device, int matDim, int iterations) {
     chk(cudaSetDevice(device), "dev");
 
@@ -451,7 +435,12 @@ BenchResult measureFp4Dense(int device, int matDim, int iterations) {
       << ",\"api\":\"tcgen05_mma_inline_ptx\""
       << ",\"scale_vec\":\"2X\"}";
 
-    BenchResult res = computeStats(vals, "fp4", "fp4_nvfp4_dense", "TFLOP/s", p.str());
+    BenchResult res = ::deusridet::bench::computeStats(vals, 3);
+    res.suite_name = "fp4";
+    res.test_name  = "fp4_nvfp4_dense";
+    res.unit       = "TFLOP/s";
+    res.params_json = p.str();
+    res.peak_pct = computePeakPctFromT(res.median, T5000Peaks::fp4_dense_tflops);
     res.metadata["format"] = "nvfp4_e2m1";
     res.metadata["block_scaled"] = "true";
     res.metadata["peak_dense_tflops"] = std::to_string(static_cast<int>(T5000Peaks::fp4_dense_tflops));
@@ -863,7 +852,11 @@ BenchResult measureFp4Sparse(int device, int matDim, int iterations) {
       << ",\"api\":\"tcgen05_mma_sp_inline_ptx\""
       << ",\"scale_vec\":\"2X\"}";
 
-    BenchResult res = computeStats(vals, "fp4", "fp4_nvfp4_sparse", "TFLOP/s", p.str());
+    BenchResult res = ::deusridet::bench::computeStats(vals, 3);
+    res.suite_name = "fp4";
+    res.test_name  = "fp4_nvfp4_sparse";
+    res.unit       = "TFLOP/s";
+    res.params_json = p.str();
     res.peak_pct = computePeakPctFromT(res.median, T5000Peaks::fp4_sparse_tflops);
     res.metadata["format"] = "nvfp4";
     res.metadata["block_scaled"] = "true";

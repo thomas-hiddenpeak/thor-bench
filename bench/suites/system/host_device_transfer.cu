@@ -16,18 +16,6 @@ inline void chk(cudaError_t e, const char* m) {
         throw std::runtime_error(std::string("CUDA(") + m + "): " + cudaGetErrorString(e));
 }
 
-BenchResult computeStats(const std::vector<double>& vals,
-                         const std::string& test, const std::string& pj) {
-    std::vector<double> sv = vals;
-    BenchResult res = ::deusridet::bench::computeStats(sv, 3);
-    res.suite_name = "host_device_transfer";
-    res.test_name  = test;
-    res.unit       = "GB/s";
-    res.params_json = pj;
-    res.metadata["integrated"] = "true";
-    return res;
-}
-
 } // anonymous namespace
 
 std::vector<BenchResult> runHostDeviceTransferBench(int device, size_t transferSize, int iterations) {
@@ -80,7 +68,15 @@ std::vector<BenchResult> runHostDeviceTransferBench(int device, size_t transferS
         p << "{\"transfer_size\":" << transferSize
           << ",\"pinned\":true"
           << ",\"integrated\":" << (prop.integrated ? "true" : "false") << "}";
-        results.push_back(computeStats(vals, "host_to_device", p.str()));
+        {
+            BenchResult res = ::deusridet::bench::computeStats(vals, 3);
+            res.suite_name = "host_device_transfer";
+            res.test_name  = "host_to_device";
+            res.unit       = "GB/s";
+            res.params_json = p.str();
+            res.metadata["integrated"] = "true";
+            results.push_back(res);
+        }
     }
 
     // ── Device → Host ──
@@ -101,7 +97,15 @@ std::vector<BenchResult> runHostDeviceTransferBench(int device, size_t transferS
         p << "{\"transfer_size\":" << transferSize
           << ",\"pinned\":true"
           << ",\"integrated\":" << (prop.integrated ? "true" : "false") << "}";
-        results.push_back(computeStats(vals, "device_to_host", p.str()));
+        {
+            BenchResult res = ::deusridet::bench::computeStats(vals, 3);
+            res.suite_name = "host_device_transfer";
+            res.test_name  = "device_to_host";
+            res.unit       = "GB/s";
+            res.params_json = p.str();
+            res.metadata["integrated"] = "true";
+            results.push_back(res);
+        }
     }
 
     // Cleanup

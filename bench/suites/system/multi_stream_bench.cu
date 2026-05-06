@@ -2,6 +2,8 @@
 #include "bench_schema.h"
 #include "bench_suites.h"
 #include "bench_peaks.h"
+#include "bench_stats.h"
+#include "bench_stats.h"
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
 #include <algorithm>
@@ -35,52 +37,6 @@ __global__ void streamReadKernel(const float* __restrict__ data, float* __restri
 inline void chk(cudaError_t e, const char* m) {
     if (e != cudaSuccess)
         throw std::runtime_error(std::string("CUDA(") + m + "): " + cudaGetErrorString(e));
-}
-
-// ── Stats helpers (same pattern as memory_bench.cu) ────────────────────────
-
-struct Stats {
-    double median = 0.0;
-    double mean = 0.0;
-    double stddev = 0.0;
-    double p95 = 0.0;
-    double p99 = 0.0;
-    double min_val = std::numeric_limits<double>::max();
-    double max_val = std::numeric_limits<double>::lowest();
-};
-
-Stats computeStats(std::vector<double>& vals) {
-    Stats s;
-    int n = static_cast<int>(vals.size());
-    if (n == 0) return s;
-
-    std::sort(vals.begin(), vals.end());
-
-    double sum = 0;
-    for (double v : vals) sum += v;
-    double mean = sum / n;
-
-    s.min_val  = vals.front();
-    s.max_val  = vals.back();
-    s.mean     = mean;
-    s.median   = (n % 2 == 1) ? vals[n / 2] : (vals[n / 2 - 1] + vals[n / 2]) / 2.0;
-
-    double sq = 0;
-    for (double v : vals) { double d = v - mean; sq += d * d; }
-    s.stddev = std::sqrt(sq / n);
-
-    auto pct = [&](double p) -> double {
-        if (n <= 1) return vals[0];
-        double r = p * (n - 1);
-        int lo = static_cast<int>(std::floor(r));
-        int hi = static_cast<int>(std::ceil(r));
-        if (hi >= n) return vals.back();
-        return vals[lo] * (1.0 - (r - lo)) + vals[hi] * (r - lo);
-    };
-    s.p95 = pct(0.95);
-    s.p99 = pct(0.99);
-
-    return s;
 }
 
 // ── Run concurrent streams, return total GB/s per iteration ────────────────
@@ -173,7 +129,7 @@ std::vector<BenchResult> runMultiStreamBench(int device, int bufferSize, int ite
 
     // First, measure single-stream baseline
     std::vector<double> singleStreamVals = runMultiStream(device, 1, numElems, gridX, iterations, kWarmup);
-    Stats singleStats = computeStats(singleStreamVals);
+    BenchResult singleStats = ::deusridet::bench::computeStats(singleStreamVals, kWarmup);
     double singleBaseline = singleStats.median;
 
     // Single-stream baseline result
@@ -182,8 +138,8 @@ std::vector<BenchResult> runMultiStreamBench(int device, int bufferSize, int ite
         r.suite_name = "multi_stream";
         r.test_name  = "single_stream_baseline";
         r.unit       = "GB/s";
-        r.sample_count = static_cast<int>(singleStreamVals.size());
-        r.warmup_count = kWarmup;
+        r.sample_count = singleStats.sample_count;
+        r.warmup_count = singleStats.warmup_count;
         r.median = singleStats.median;
         r.mean   = singleStats.mean;
         r.stddev = singleStats.stddev;
@@ -206,7 +162,7 @@ std::vector<BenchResult> runMultiStreamBench(int device, int bufferSize, int ite
         int numStreams = streamCounts[streamIdx];
 
         std::vector<double> vals = runMultiStream(device, numStreams, numElems, gridX, iterations, kWarmup);
-        Stats st = computeStats(vals);
+        BenchResult st = ::deusridet::bench::computeStats(vals, kWarmup);
         double totalGbs = st.median;
         double perStreamGbs = totalGbs / numStreams;
         double speedup = singleBaseline > 0.0 ? totalGbs / singleBaseline : 0.0;
@@ -215,8 +171,8 @@ std::vector<BenchResult> runMultiStreamBench(int device, int bufferSize, int ite
         r.suite_name = "multi_stream";
         r.test_name  = "multi_stream_" + std::to_string(numStreams);
         r.unit       = "GB/s";
-        r.sample_count = static_cast<int>(vals.size());
-        r.warmup_count = kWarmup;
+        r.sample_count = st.sample_count;
+        r.warmup_count = st.warmup_count;
         r.median = totalGbs;
         r.mean   = st.mean;
         r.stddev = st.stddev;

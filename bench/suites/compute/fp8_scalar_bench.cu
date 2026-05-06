@@ -57,23 +57,6 @@ inline void chk(cudaError_t e, const char* m) {
     if (e != cudaSuccess)
         throw std::runtime_error(std::string("CUDA(") + m + "): " + cudaGetErrorString(e));
 }
-BenchResult computeStats(const std::vector<double>& vals,
-                         const std::string& suite, const std::string& test,
-                         const std::string& unit, const std::string& pj,
-                         double peakTflops = 0.0) {
-    std::vector<double> sv = vals;
-    BenchResult res = ::deusridet::bench::computeStats(sv, 3);
-    res.suite_name = suite;
-    res.test_name  = test;
-    res.unit       = unit;
-    res.params_json = pj;
-    if (peakTflops > 0.0) {
-        res.peak_pct = computePeakPctFromT(res.median, peakTflops);
-    }
-    return res;
-}
-
-// ── Measure FP8 Dense
 // ── Measure FP8 Dense ──────────────────────────────────────────────────────
 BenchResult measureFP8Dense(int device, int matDim, int iterations) {
     cudaEvent_t evS, evE;
@@ -137,8 +120,12 @@ BenchResult measureFP8Dense(int device, int matDim, int iterations) {
       << ",\"tile\":" << kTile << ",\"format\":\"e4m3\""
       << ",\"type\":\"scalar_fp8_kernel\"}";
 
-    BenchResult res = computeStats(vals, "fp8_scalar", "fp8_scalar_dense",
-                                     "TFLOP/s", p.str(), T5000Peaks::fp8_dense_tflops);
+    BenchResult res = ::deusridet::bench::computeStats(vals, 3);
+    res.suite_name = "fp8_scalar";
+    res.test_name  = "fp8_scalar_dense";
+    res.unit       = "TFLOP/s";
+    res.params_json = p.str();
+    res.peak_pct = computePeakPctFromT(res.median, T5000Peaks::fp8_dense_tflops);
     res.metadata["peak_dense_tflops"] = std::to_string(static_cast<int>(T5000Peaks::fp8_dense_tflops));
     res.metadata["note"] = "scalar FP8 kernel; tcgen05.mma kind::f8f6f4 PTX requires SMEM descriptors + TMEM alloc";
 

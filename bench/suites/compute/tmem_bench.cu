@@ -18,23 +18,6 @@ inline void chk(cudaError_t e, const char* m) {
     if (e != cudaSuccess)
         throw std::runtime_error(std::string("CUDA(") + m + "): " + cudaGetErrorString(e));
 }
-BenchResult computeStats(const std::vector<double>& vals,
-                         const std::string& suite, const std::string& test,
-                         const std::string& unit, const std::string& pj,
-                         double peak = 0.0) {
-    std::vector<double> sv = vals;
-    BenchResult res = ::deusridet::bench::computeStats(sv, 3);
-    res.suite_name = suite;
-    res.test_name  = test;
-    res.unit       = unit;
-    res.params_json = pj;
-    if (peak > 0.0) {
-        res.peak_pct = computePeakPctSame(res.median, peak);
-    }
-    return res;
-}
-
-// ── Shared memory read bandwidth kernel
 // ── Shared memory read bandwidth kernel ────────────────────────────────────
 // Each threadblock reads a 128-byte tile from __shared__ memory repeatedly.
 // Uses .param to avoid compiler optimizing away the loop.
@@ -135,7 +118,11 @@ BenchResult measureTMEMReadBW(int device, int iterations) {
     p << "{\"tile_bytes\":" << TileBytes << ",\"loops\":" << loops
       << ",\"tpb\":" << tpb << ",\"type\":\"smem_proxy_for_tmem\"}";
 
-    BenchResult res = computeStats(vals, "tmem", "tmem_read_bw", "GB/s", p.str());
+    BenchResult res = ::deusridet::bench::computeStats(vals, 3);
+    res.suite_name = "tmem";
+    res.test_name  = "tmem_read_bw";
+    res.unit       = "GB/s";
+    res.params_json = p.str();
     res.metadata["proxy"] = "true";
     res.metadata["note"] = "SMEM read as TMEM proxy; tcgen05.alloc/ld PTX requires descriptor setup";
 
@@ -187,7 +174,11 @@ BenchResult measureTMEMWriteBW(int device, int iterations) {
     p << "{\"tile_bytes\":" << TileBytes << ",\"loops\":" << loops
       << ",\"tpb\":" << tpb << ",\"type\":\"smem_proxy_for_tmem\"}";
 
-    BenchResult res = computeStats(vals, "tmem", "tmem_write_bw", "GB/s", p.str());
+    BenchResult res = ::deusridet::bench::computeStats(vals, 3);
+    res.suite_name = "tmem";
+    res.test_name  = "tmem_write_bw";
+    res.unit       = "GB/s";
+    res.params_json = p.str();
     res.metadata["proxy"] = "true";
     res.metadata["note"] = "SMEM write as TMEM proxy; tcgen05.st PTX requires TMEM allocation";
 
@@ -238,7 +229,11 @@ BenchResult measureTMEMCopyLatency(int device, int iterations) {
     p << "{\"tile_bytes\":" << TileBytes << ",\"tpb\":" << tpb
       << ",\"type\":\"smem_proxy_for_tmem\"}";
 
-    BenchResult res = computeStats(vals, "tmem", "tmem_cp_latency", "ns", p.str());
+    BenchResult res = ::deusridet::bench::computeStats(vals, 3);
+    res.suite_name = "tmem";
+    res.test_name  = "tmem_cp_latency";
+    res.unit       = "ns";
+    res.params_json = p.str();
     res.metadata["proxy"] = "true";
     res.metadata["note"] = "Global→SMEM→Global latency as tcgen05.cp proxy";
 
@@ -296,7 +291,11 @@ BenchResult measureTMEMvsSMEM(int device, int iterations) {
       << ",\"loops\":" << loops << ",\"tpb\":" << tpb
       << ",\"note\":\"large tile SMEM read as TMEM bandwidth proxy\"}";
 
-    BenchResult res = computeStats(vals, "tmem", "tmem_vs_smem", "GB/s", p.str());
+    BenchResult res = ::deusridet::bench::computeStats(vals, 3);
+    res.suite_name = "tmem";
+    res.test_name  = "tmem_vs_smem";
+    res.unit       = "GB/s";
+    res.params_json = p.str();
     res.metadata["proxy"] = "true";
     res.metadata["note"] = "Large-tile SMEM vs small-tile SMEM as TMEM proxy comparison";
 

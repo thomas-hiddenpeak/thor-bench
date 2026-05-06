@@ -40,24 +40,7 @@ inline void chk(cudaError_t e, const char* m) {
     if (e != cudaSuccess)
         throw std::runtime_error(std::string("CUDA(") + m + "): " + cudaGetErrorString(e));
 }
-BenchResult computeStats(const std::vector<double>& vals,
-                         const std::string& suite, const std::string& test,
-                         const std::string& unit, const std::string& pj,
-                         double peakTflops = 0.0) {
-    std::vector<double> sv = vals;
-    BenchResult res = ::deusridet::bench::computeStats(sv, 3);
-    res.suite_name = suite;
-    res.test_name  = test;
-    res.unit       = unit;
-    res.params_json = pj;
-    if (peakTflops > 0.0) {
-        res.peak_pct = computePeakPctFromT(res.median, peakTflops);
-    }
-    return res;
-}
-
-// ── Measure INT8 Dense
-// ── Measure INT8 Dense ─────────────────────────────────────────────────────
+// ── Measure INT8 Dense ──────────────────────────────────────────────────────
 BenchResult measureINT8Dense(int device, int matDim, int iterations) {
     cudaEvent_t evS, evE;
     chk(cudaEventCreate(&evS), "es");
@@ -117,8 +100,11 @@ BenchResult measureINT8Dense(int device, int matDim, int iterations) {
     p << "{\"M\":" << M << ",\"N\":" << N << ",\"K\":" << K
       << ",\"tile\":" << kTile << ",\"type\":\"scalar_int8_kernel\"}";
 
-    BenchResult res = computeStats(vals, "int8_scalar", "int8_scalar_dense",
-                                     "TOP/s", p.str());
+    BenchResult res = ::deusridet::bench::computeStats(vals, 3);
+    res.suite_name = "int8_scalar";
+    res.test_name  = "int8_scalar_dense";
+    res.unit       = "TOP/s";
+    res.params_json = p.str();
     res.metadata["note"] = "scalar INT8 kernel with int32 accumulate; tcgen05.mma kind::i8 PTX requires SMEM descriptors + TMEM alloc";
 
     chk(cudaFree(dA), "fa");
