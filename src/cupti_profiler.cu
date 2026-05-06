@@ -4,6 +4,7 @@
 #include <cstring>
 #include <iostream>
 #include <algorithm>
+#include <atomic>
 #include <numeric>
 #include <utility>
 
@@ -43,10 +44,34 @@ __global__ void cuptiOverheadKernel(float* data, int n) {
 
 constexpr size_t kCuptiBufferSize = 1ULL << 24; // 16 MB per buffer
 
+// ── H2 mitigation: atomic guard for global CUPTI state ──
+// gCuptiBuffer and gCuptiProfiler are accessed from CUPTI callbacks (arbitrary threads).
+// gCuptiActive provides a safe, lock-free entry gate for callbacks.
+//
+// Lifecycle:
+//   init():       gCuptiActive = true  (after callbacks registered, before any fire)
+//   shutdown():   cuptiActivityFlushAll(0) blocks until all callbacks drain,
+//                 THEN gCuptiActive = false (no callback can reach the globals after this).
+//   callbacks:    check gCuptiActive.load() first; if false, return immediately.
+//
+// Key invariants:
+//  1. gCuptiProfiler is written BEFORE cuptiActivityRegisterCallbacks (line 184).
+//     No callback can fire before init() reaches this point — CUPTI guarantee.
+//  2. shutdown() calls cuptiActivityFlushAll(0) BEFORE clearing globals.
+//     FlushAll blocks until ALL pending callbacks return — no UAF possible.
+//  3. gCuptiBuffer is only freed AFTER FlushAll in shutdown — callbacks never see a freed buffer.
+//
+// Audit note (2026-05-06): This atomic flag was added to address H2 finding.
+// The flag is a belt-and-suspenders defense; the FlushAll barrier alone provides
+// correctness, but the flag makes the safety property explicit and detectable.
+
 static uint8_t* gCuptiBuffer = nullptr;
 static CuptiProfiler* gCuptiProfiler = nullptr;
+static std::atomic<bool> gCuptiActive{false};
 
 // Request callback: called once at startup, allocate buffer
+// H2 note: No gCuptiActive check needed here — this callback fires AFTER init() sets gCuptiActive=true,
+// and CUPTI never calls it again during shutdown (FlushAll drains buffers first).
 static void CUPTIAPI cuptiBufferRequested(uint8_t** buffer, size_t* size, size_t* maxNumRecords) {
     gCuptiBuffer = static_cast<uint8_t*>(std::malloc(kCuptiBufferSize));
     if (!gCuptiBuffer) {
@@ -70,6 +95,9 @@ static void CUPTIAPI cuptiBufferComplete(CUcontext context,
     (void)context;
     (void)streamId;
     (void)size;
+
+    // H2 guard: exit immediately if profiler is shutting down
+    if (!gCuptiActive.load(std::memory_order_acquire)) return;
 
     auto* profiler = gCuptiProfiler;
     if (!profiler || !buffer || validSize == 0) return;
@@ -185,6 +213,10 @@ bool CuptiProfiler::init(int device) {
 
     checkCupti(cuptiActivityRegisterCallbacks(cuptiBufferRequested, cuptiBufferComplete),
                 "cuptiActivityRegisterCallbacks");
+
+    // H2 guard: activate atomic flag AFTER callbacks registered but BEFORE enabling activities.
+    // Memory order release ensures the flag write is visible before any callback reads it.
+    gCuptiActive.store(true, std::memory_order_release);
 
     // Enable activity kinds (v1: single param, no subscriber/device)
     auto enable = [&](CUpti_ActivityKind kind) {
@@ -330,6 +362,10 @@ void CuptiProfiler::shutdown() {
     if (!active_) return;
 
     cuptiActivityFlushAll(0);
+
+    // H2 guard: deactivate AFTER FlushAll drains all callbacks.
+    // No callback can reach gCuptiProfiler/gCuptiBuffer after this point.
+    gCuptiActive.store(false, std::memory_order_release);
 
     constexpr CUpti_ActivityKind kinds[] = {
         CUPTI_ACTIVITY_KIND_RUNTIME,
