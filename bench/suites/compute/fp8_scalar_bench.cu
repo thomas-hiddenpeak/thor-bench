@@ -2,6 +2,7 @@
 #include "bench_schema.h"
 #include "bench_suites.h"
 #include "bench_peaks.h"
+#include "bench_stats.h"
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
 #include <cuda_fp8.h>
@@ -56,50 +57,23 @@ inline void chk(cudaError_t e, const char* m) {
     if (e != cudaSuccess)
         throw std::runtime_error(std::string("CUDA(") + m + "): " + cudaGetErrorString(e));
 }
-
-// ── Stats helpers ──────────────────────────────────────────────────────────
 BenchResult computeStats(const std::vector<double>& vals,
-                          const std::string& suite, const std::string& test,
-                          const std::string& unit, const std::string& pj,
-                          double peakTflops = 0.0) {
-    BenchResult res;
+                         const std::string& suite, const std::string& test,
+                         const std::string& unit, const std::string& pj,
+                         double peakTflops = 0.0) {
+    std::vector<double> sv = vals;
+    BenchResult res = ::deusridet::bench::computeStats(sv, 3);
     res.suite_name = suite;
     res.test_name  = test;
     res.unit       = unit;
-    res.warmup_count = 3;
     res.params_json = pj;
-    int n = static_cast<int>(vals.size());
-    res.sample_count = n;
-    if (!vals.empty()) {
-        std::vector<double> sv = vals;
-        std::sort(sv.begin(), sv.end());
-        double sum = 0;
-        for (double v : sv) sum += v;
-        double mean = sum / n;
-        res.min_val  = sv.front();
-        res.max_val  = sv.back();
-        res.mean     = mean;
-        res.median   = (n % 2 == 1) ? sv[n / 2] : (sv[n / 2 - 1] + sv[n / 2]) / 2.0;
-        double sq = 0;
-        for (double v : sv) { double d = v - mean; sq += d * d; }
-        res.stddev = std::sqrt(sq / n);
-        auto pct = [&](double p) -> double {
-            if (n <= 1) return sv[0];
-            double r = p * (n - 1);
-            int lo = static_cast<int>(std::floor(r));
-            int hi = static_cast<int>(std::ceil(r));
-            if (hi >= n) return sv.back();
-            return sv[lo] * (1.0 - (r - lo)) + sv[hi] * (r - lo);
-        };
-        res.p95 = pct(0.95);
-        res.p99 = pct(0.99);
-    }
     if (peakTflops > 0.0) {
         res.peak_pct = computePeakPctFromT(res.median, peakTflops);
     }
     return res;
 }
 
+// ── Measure FP8 Dense
 // ── Measure FP8 Dense ──────────────────────────────────────────────────────
 BenchResult measureFP8Dense(int device, int matDim, int iterations) {
     cudaEvent_t evS, evE;

@@ -1,6 +1,7 @@
 #include "compute/tensor_bench.h"
 #include "bench_schema.h"
 #include "bench_suites.h"
+#include "bench_stats.h"
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
 #include <cuda_fp16.h>
@@ -49,45 +50,6 @@ __global__ void mmulFP16Kernel(__half* A, __half* B, __half* C, int M, int N, in
 // Throughput measurement is valid; numeric results are not comparable.
 // Metadata note: "bf16_mma via fp16 reinterpret"
 
-// ── Stats ──────────────────────────────────────────────────────────────────
-BenchResult computeStats(const std::vector<double>& vals,
-                         const std::string& suite, const std::string& test,
-                         const std::string& unit, const std::string& pj) {
-    BenchResult res;
-    res.suite_name = suite;
-    res.test_name  = test;
-    res.unit       = unit;
-    res.warmup_count = 3;
-    res.params_json = pj;
-    int n = static_cast<int>(vals.size());
-    res.sample_count = n;
-    if (!vals.empty()) {
-        std::vector<double> sv = vals;
-        std::sort(sv.begin(), sv.end());
-        double sum = 0;
-        for (double v : sv) sum += v;
-        double mean = sum / n;
-        res.min_val  = sv.front();
-        res.max_val  = sv.back();
-        res.mean     = mean;
-        res.median   = (n % 2 == 1) ? sv[n / 2] : (sv[n / 2 - 1] + sv[n / 2]) / 2.0;
-        double sq = 0;
-        for (double v : sv) { double d = v - mean; sq += d * d; }
-        res.stddev = std::sqrt(sq / n);
-        auto pct = [&](double p) -> double {
-            if (n <= 1) return sv[0];
-            double r = p * (n - 1);
-            int lo = static_cast<int>(std::floor(r));
-            int hi = static_cast<int>(std::ceil(r));
-            if (hi >= n) return sv.back();
-            return sv[lo] * (1.0 - (r - lo)) + sv[hi] * (r - lo);
-        };
-        res.p95 = pct(0.95);
-        res.p99 = pct(0.99);
-    }
-    return res;
-}
-
 // ── Measure FP16 ───────────────────────────────────────────────────────────
 BenchResult measureFP16(half* dA, half* dB, half* dC, int M, int N, int K,
                         dim3 grid, int tpb, double tfl, int iters,
@@ -106,7 +68,12 @@ BenchResult measureFP16(half* dA, half* dB, half* dC, int M, int N, int K,
     std::ostringstream p;
     p << "{\"M\":" << M << ",\"N\":" << N << ",\"K\":" << K
       << ",\"gx\":" << grid.x << ",\"gy\":" << grid.y << ",\"tpb\":" << tpb << "}";
-    return computeStats(vals, "tensor", "fp16_mma", "TFLOP/s", p.str());
+     BenchResult res = ::deusridet::bench::computeStats(vals, 3);
+     res.suite_name = "tensor";
+     res.test_name  = "fp16_mma";
+     res.unit       = "TFLOP/s";
+     res.params_json = p.str();
+     return res;
 }
 
 // ── Measure BF16 (via FP16 reinterpret) ────────────────────────────────────
@@ -134,7 +101,11 @@ BenchResult measureBF16(__nv_bfloat16* dA, __nv_bfloat16* dB, float* dC,
     std::ostringstream p;
     p << "{\"M\":" << M << ",\"N\":" << N << ",\"K\":" << K
       << ",\"gx\":" << grid.x << ",\"gy\":" << grid.y << ",\"tpb\":" << tpb << "}";
-    BenchResult res = computeStats(vals, "tensor", "bf16_mma", "TFLOP/s", p.str());
+     BenchResult res = ::deusridet::bench::computeStats(vals, 3);
+     res.suite_name = "tensor";
+     res.test_name  = "bf16_mma";
+     res.unit       = "TFLOP/s";
+     res.params_json = p.str();
     res.metadata["approach"] = "bf16_data_reinterpreted_as_fp16_for_wmma";
     res.metadata["note"] = "nvcuda::wmma BF16 fragments incomplete in CUDA 13.0; throughput measured via fp16 WMMA path with bf16 memory layout";
     res.peak_pct = std::nullopt; // BF16 peak not specified in T5000 datasheet

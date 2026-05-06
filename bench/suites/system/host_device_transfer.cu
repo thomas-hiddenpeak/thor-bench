@@ -1,5 +1,6 @@
 #include "system/host_device_transfer.h"
 #include "bench_suites.h"
+#include "bench_stats.h"
 #include <cuda_runtime.h>
 #include <algorithm>
 #include <cmath>
@@ -17,39 +18,13 @@ inline void chk(cudaError_t e, const char* m) {
 
 BenchResult computeStats(const std::vector<double>& vals,
                          const std::string& test, const std::string& pj) {
-    BenchResult res;
+    std::vector<double> sv = vals;
+    BenchResult res = ::deusridet::bench::computeStats(sv, 3);
     res.suite_name = "host_device_transfer";
     res.test_name  = test;
     res.unit       = "GB/s";
-    res.warmup_count = 3;
     res.params_json = pj;
     res.metadata["integrated"] = "true";
-    int n = static_cast<int>(vals.size());
-    res.sample_count = n;
-    if (!vals.empty()) {
-        std::vector<double> sv = vals;
-        std::sort(sv.begin(), sv.end());
-        double sum = 0;
-        for (double v : sv) sum += v;
-        double mean = sum / n;
-        res.min_val  = sv.front();
-        res.max_val  = sv.back();
-        res.mean     = mean;
-        res.median   = (n % 2 == 1) ? sv[n / 2] : (sv[n / 2 - 1] + sv[n / 2]) / 2.0;
-        double sq = 0;
-        for (double v : sv) { double d = v - mean; sq += d * d; }
-        res.stddev = std::sqrt(sq / n);
-        auto pct = [&](double p) -> double {
-            if (n <= 1) return sv[0];
-            double r = p * (n - 1);
-            int lo = static_cast<int>(std::floor(r));
-            int hi = static_cast<int>(std::ceil(r));
-            if (hi >= n) return sv.back();
-            return sv[lo] * (1.0 - (r - lo)) + sv[hi] * (r - lo);
-        };
-        res.p95 = pct(0.95);
-        res.p99 = pct(0.99);
-    }
     return res;
 }
 

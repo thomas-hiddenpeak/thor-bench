@@ -1,6 +1,7 @@
 #include "memory/tma_copy.h"
 #include "bench_schema.h"
 #include "bench_peaks.h"
+#include "bench_stats.h"
 #include <cuda_runtime.h>
 #include <cuda_runtime_api.h>
 #include <algorithm>
@@ -15,39 +16,6 @@ namespace {
 inline void chk(cudaError_t e, const char* m) {
     if (e != cudaSuccess)
         throw std::runtime_error(std::string("CUDA(") + m + "): " + cudaGetErrorString(e));
-}
-
-BenchResult computeStats(std::vector<double>& vals, int warmup) {
-    std::sort(vals.begin(), vals.end());
-    int n = static_cast<int>(vals.size());
-    double sum = 0;
-    for (double v : vals) sum += v;
-    double mean = sum / n;
-
-    double sq = 0;
-    for (double v : vals) { double d = v - mean; sq += d * d; }
-    double stddev = std::sqrt(sq / n);
-
-    auto pct = [&](double p) -> double {
-        if (n <= 1) return vals[0];
-        double r = p * (n - 1);
-        int lo = static_cast<int>(std::floor(r));
-        int hi = static_cast<int>(std::ceil(r));
-        if (hi >= n) return vals.back();
-        return vals[lo] * (1.0 - (r - lo)) + vals[hi] * (r - lo);
-    };
-
-    BenchResult res;
-    res.sample_count = n;
-    res.warmup_count = warmup;
-    res.min_val  = vals.front();
-    res.max_val  = vals.back();
-    res.mean     = mean;
-    res.median   = (n % 2 == 1) ? vals[n / 2] : (vals[n / 2 - 1] + vals[n / 2]) / 2.0;
-    res.stddev   = stddev;
-    res.p95      = pct(0.95);
-    res.p99      = pct(0.99);
-    return res;
 }
 
 void benchDirection(void* src, void* dst, size_t bytes,
