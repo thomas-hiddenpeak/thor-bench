@@ -106,7 +106,7 @@ bench/suites/
 │   └── av1_decode_bench.{cpp,h}      # NVDEC AV1 decoding
 └── cpu/
     ├── arm_compute_bench.{cpp,h}     # ARM CPU FP32 baseline
-    └── arm_sve2_bench.{cpp,h}        # ARM NEON fallback benchmark
+    └── arm_neon_bench.{cpp,h}        # ARM NEON fallback benchmark
 ```
 
 ## Design Principles

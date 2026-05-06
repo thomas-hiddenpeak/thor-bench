@@ -26,6 +26,11 @@ inline void chkCublas(cublasStatus_t s, const char* m) {
         throw std::runtime_error(std::string("cuBLAS(") + m + "): status " + std::to_string(s));
 }
 
+inline void chkCublasLt(cublasStatus_t s, const char* m) {
+    if (s != CUBLAS_STATUS_SUCCESS)
+        throw std::runtime_error(std::string("cuBLASLt(") + m + "): status " + std::to_string(s));
+}
+
 
 
 // ── SGEMM (FP32) ─────────────────────────────────────────────────────────────
@@ -261,22 +266,123 @@ BenchResult runSgemmStridedBatched(int device, int matDim, int iterations) {
     return res;
 }
 
-// ── cuBLASLt SGEMM (FP32) stub ───────────────────────────────────────────────
-// cuBLASLt API changed significantly in CUDA 13.0 (cublasLtMatrixLayoutCreate,
-// cublasLtMatmul signatures changed). Tegra availability uncertain. Stub for now.
+// ── cuBLASLt SGEMM (FP32) ────────────────────────────────────────────────────
+// Square n×n×n GEMM via cublasLtMatmul. cuBLASLt uses column-major internally;
+// for square matrices transA=T, transB=T with uniform layouts produces the correct
+// result (equivalent to transA=T, transB=N for square operands).
 BenchResult runCublasLtSgemm(int device, int matDim, int iterations) {
-    (void)device; (void)matDim; (void)iterations;
-    BenchResult res{};
+    BenchResult res;
     res.suite_name = "cublas";
     res.test_name  = "lt_sgemm_fp32";
     res.unit       = "TFLOP/s";
-    res.sample_count = 0;
-    res.warmup_count = 0;
-    res.params_json = "{\"note\":\"cuBLASLt API changed in CUDA 13.0; Tegra availability uncertain\"}";
+    res.warmup_count = 3;
+
+    chk(cudaSetDevice(device), "dev");
+
+    cublasLtHandle_t ltHandle;
+    chkCublasLt(cublasLtCreate(&ltHandle), "create");
+
+    cudaEvent_t evS, evE;
+    chk(cudaEventCreate(&evS), "evS");
+    chk(cudaEventCreate(&evE), "evE");
+
+    int n = std::min(matDim, 4096);
+    size_t sz = static_cast<size_t>(n) * static_cast<size_t>(n) * sizeof(float);
+
+    float *dA = nullptr, *dB = nullptr, *dC = nullptr;
+    chk(cudaMalloc(&dA, sz), "dA");
+    chk(cudaMalloc(&dB, sz), "dB");
+    chk(cudaMalloc(&dC, sz), "dC");
+
+    chk(cudaMemset(dA, 0x3F, sz), "initA");
+    chk(cudaMemset(dB, 0x3F, sz), "initB");
+
+    float alpha = 1.0f, beta = 0.0f;
+
+    // Operation descriptor: FP32 compute, both operands transposed
+    cublasLtMatmulDesc_t operationDesc;
+    chkCublasLt(cublasLtMatmulDescCreate(&operationDesc, CUBLAS_COMPUTE_32F, CUDA_R_32F), "opDesc");
+    cublasOperation_t transA = CUBLAS_OP_T;
+    cublasOperation_t transB = CUBLAS_OP_T;
+    chkCublasLt(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_TRANSA,
+                &transA, sizeof(transA)), "transA");
+    chkCublasLt(cublasLtMatmulDescSetAttribute(operationDesc, CUBLASLT_MATMUL_DESC_TRANSB,
+                &transB, sizeof(transB)), "transB");
+
+    // Matrix layouts: all n×n, leading dim = n
+    cudaDataType_t Atype = CUDA_R_32F;
+    cublasLtMatrixLayout_t Adesc, Bdesc, Cdesc, Ddesc;
+    chkCublasLt(cublasLtMatrixLayoutCreate(&Adesc, Atype, n, n, n), "Adesc");
+    chkCublasLt(cublasLtMatrixLayoutCreate(&Bdesc, Atype, n, n, n), "Bdesc");
+    chkCublasLt(cublasLtMatrixLayoutCreate(&Cdesc, Atype, n, n, n), "Cdesc");
+    chkCublasLt(cublasLtMatrixLayoutCreate(&Ddesc, Atype, n, n, n), "Ddesc");
+
+    // Preference: no workspace
+    cublasLtMatmulPreference_t preference;
+    chkCublasLt(cublasLtMatmulPreferenceCreate(&preference), "pref");
+    size_t workspace = 0;
+    chkCublasLt(cublasLtMatmulPreferenceSetAttribute(preference,
+                CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES, &workspace, sizeof(workspace)), "prefWS");
+
+    // Find best algorithm
+    cublasLtMatmulHeuristicResult_t algo;
+    int returned = 0;
+    chkCublasLt(cublasLtMatmulAlgoGetHeuristic(ltHandle, operationDesc, Adesc, Bdesc, Cdesc, Ddesc,
+                preference, 1, &algo, &returned), "algo");
+    if (returned == 0) {
+        throw std::runtime_error("cuBLASLt: no algorithm found for SGEMM");
+    }
+
+    // Warmup
+    for (int w = 0; w < 3; ++w) {
+        chkCublasLt(cublasLtMatmul(ltHandle, operationDesc, &alpha, dA, Adesc, dB, Bdesc,
+                    &beta, dC, Cdesc, dC, Ddesc, &algo.algo, nullptr, 0, 0), "warmup");
+    }
+    chk(cudaDeviceSynchronize(), "warmupSync");
+
+    // Measurement
+    long long flopsPerCall = 2LL * n * n * n;
+    std::vector<double> vals;
+    for (int i = 0; i < iterations; ++i) {
+        chk(cudaEventRecord(evS), "recS");
+        chkCublasLt(cublasLtMatmul(ltHandle, operationDesc, &alpha, dA, Adesc, dB, Bdesc,
+                    &beta, dC, Cdesc, dC, Ddesc, &algo.algo, nullptr, 0, 0), "ltSgemm");
+        chk(cudaEventRecord(evE), "recE");
+        chk(cudaEventSynchronize(evE), "sync");
+
+        float ms = 0;
+        chk(cudaEventElapsedTime(&ms, evS, evE), "et");
+        double sec = ms / 1000.0;
+        double tflops = sec > 0.0 ? flopsPerCall / (sec * 1e12) : 0.0;
+        vals.push_back(tflops);
+    }
+
+    std::ostringstream p;
+    p << "{\"mat_dim\":" << n << ",\"flops_per_call\":" << flopsPerCall << "}";
+
+    res = ::deusridet::bench::computeStats(vals, 3);
+    res.suite_name = "cublas";
+    res.test_name  = "lt_sgemm_fp32";
+    res.unit       = "TFLOP/s";
+    res.params_json = p.str();
+    res.peak_pct = computePeakPctFromT(res.median, T5000Peaks::fp32_tflops);
     res.metadata["api"] = "cublasLt";
     res.metadata["precision"] = "fp32";
-    res.metadata["stub"] = "true";
-    res.metadata["stub_reason"] = "cuBLASLt API changed significantly in CUDA 13.0; Tegra availability uncertain";
+
+    // Cleanup
+    chk(cudaFree(dA), "freeA");
+    chk(cudaFree(dB), "freeB");
+    chk(cudaFree(dC), "freeC");
+    chk(cudaEventDestroy(evS), "destroyEvS");
+    chk(cudaEventDestroy(evE), "destroyEvE");
+    cublasLtMatrixLayoutDestroy(Adesc);
+    cublasLtMatrixLayoutDestroy(Bdesc);
+    cublasLtMatrixLayoutDestroy(Cdesc);
+    cublasLtMatrixLayoutDestroy(Ddesc);
+    cublasLtMatmulPreferenceDestroy(preference);
+    cublasLtMatmulDescDestroy(operationDesc);
+    cublasLtDestroy(ltHandle);
+
     return res;
 }
 

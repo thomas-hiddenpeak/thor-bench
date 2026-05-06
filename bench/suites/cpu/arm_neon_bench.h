@@ -5,6 +5,6 @@
 
 namespace deusridet::bench {
 
-std::vector<BenchResult> runARMSVE2Bench(int threadCount, int iterations);
+std::vector<BenchResult> runARMNEONBench(int threadCount, int iterations);
 
 }

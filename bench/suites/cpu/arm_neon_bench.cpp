@@ -1,4 +1,4 @@
-#include "arm_sve2_bench.h"
+#include "arm_neon_bench.h"
 #include "bench_suites.h"
 #include <arm_neon.h>
 #include <cmath>
@@ -118,7 +118,7 @@ static BenchResult makeResult(
     };
 
     BenchResult r{};
-    r.suite_name   = "arm_sve2";
+    r.suite_name   = "arm_neon";
     r.test_name    = test_name;
     r.unit         = unit;
     r.median       = median;
@@ -207,7 +207,7 @@ static BenchResult runI8Test(const std::string& test_name, double opsPerCall) {
 
 }
 
-std::vector<BenchResult> runARMSVE2Bench(int, int) {
+std::vector<BenchResult> runARMNEONBench(int, int) {
     std::vector<BenchResult> results;
     initData();
 
@@ -218,16 +218,16 @@ std::vector<BenchResult> runARMSVE2Bench(int, int) {
     // INT8: 16 mults per 16 elements = 1 op/element
     double int8_ops = kDataLen;
 
-    results.push_back(runFTest("sve2_fp32", fp32_flops));
-    results.push_back(runF16Test("sve2_fp16", fp16_flops));
-    results.push_back(runI8Test("sve2_int8", int8_ops));
+    results.push_back(runFTest("neon_fp32", fp32_flops));
+    results.push_back(runF16Test("neon_fp16", fp16_flops));
+    results.push_back(runI8Test("neon_int8", int8_ops));
 
     return results;
 }
 
 }
 
-BENCH_REGISTER_SUITE(arm_sve2, "ARM CPU SVE2 vector throughput (NEON fallback, SVE2 intrinsics unavailable)",
+BENCH_REGISTER_SUITE(arm_neon, "ARM CPU NEON vector throughput (NEON fallback, SVE2 intrinsics unavailable)",
     [](deusridet::bench::BenchRunner&) -> std::vector<deusridet::bench::BenchResult> {
-        return deusridet::bench::runARMSVE2Bench(4, 10);
+        return deusridet::bench::runARMNEONBench(4, 10);
     });

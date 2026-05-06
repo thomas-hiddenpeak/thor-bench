@@ -59,7 +59,7 @@ set(BENCH_CPP_SRCS
     bench/suites/decode/av1_decode_bench.cpp
     bench/suites/encode/nvjpeg_bench.cpp
     bench/suites/cpu/arm_compute_bench.cpp
-    bench/suites/cpu/arm_sve2_bench.cpp
+    bench/suites/cpu/arm_neon_bench.cpp
     bench/suites/system/mig_bench.cpp
 )
 

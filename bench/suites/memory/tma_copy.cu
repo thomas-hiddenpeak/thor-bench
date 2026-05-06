@@ -41,7 +41,7 @@ void benchDirection(void* src, void* dst, size_t bytes,
     res.peak_pct   = computePeakPctSame(res.median, T5000Peaks::memory_bandwidth_gbs);
     res.metadata["alloc_type"] = allocType;
     if (std::string(allocType) == "fallback")
-        res.metadata["fallback_reason"] = "cudaMemPoolCreate unsupported on Tegra";
+        res.metadata["fallback_reason"] = "cudaMemPoolCreate not available";
     res.metadata["copy_kind"] = kind == cudaMemcpyHostToDevice ? "h2d" :
                              kind == cudaMemcpyDeviceToHost ? "d2h" : "d2d";
     {
@@ -68,30 +68,42 @@ std::vector<BenchResult> runTMACopyBench(int device, size_t transferSize, int it
     chk(cudaEventCreate(&evE), "ee");
     chk(cudaStreamCreate(&str), "st");
 
-    // Create mempool — may fail on Tegra (cudaMemPoolCreate not supported on embedded platforms)
+    // Check if memory pools are supported on this device
+    int memPoolsSupported = 0;
+    chk(cudaDeviceGetAttribute(&memPoolsSupported, cudaDevAttrMemoryPoolsSupported, device), "attr");
+    // This is tracked in benchDirection metadata via allocType
+
     bool useMempool = false;
-    const char* allocType = "mempool";
-    cudaMemPoolProps props{};
-    props.allocType = cudaMemAllocationTypePinned;
-    props.handleTypes = cudaMemHandleTypeNone;
-    cudaError_t memPoolErr = cudaMemPoolCreate(&pool, &props);
+    const char* allocType = "fallback";
 
     void* dBuf1 = nullptr;
     void* dBuf2 = nullptr;
     void* hBuf = nullptr;
 
-    if (memPoolErr == cudaSuccess) {
-        useMempool = true;
-        size_t poolLimit = allocBytes * 4;
-        chk(cudaMemPoolSetAttribute(pool, cudaMemPoolAttrReleaseThreshold, &poolLimit), "mpa");
+    if (memPoolsSupported) {
+        // Attempt mempool creation
+        cudaMemPoolProps props{};
+        props.allocType = cudaMemAllocationTypePinned;
+        props.handleTypes = cudaMemHandleTypeNone;
+        cudaError_t memPoolErr = cudaMemPoolCreate(&pool, &props);
 
-        // Allocate device buffers from mempool
-        chk(cudaMallocFromPoolAsync(&dBuf1, allocBytes, pool, str), "ma1");
-        chk(cudaMallocFromPoolAsync(&dBuf2, allocBytes, pool, str), "ma2");
-        chk(cudaStreamSynchronize(str), "mas");
+        if (memPoolErr == cudaSuccess) {
+            useMempool = true;
+            allocType = "mempool";
+            size_t poolLimit = allocBytes * 4;
+            chk(cudaMemPoolSetAttribute(pool, cudaMemPoolAttrReleaseThreshold, &poolLimit), "mpa");
+
+            chk(cudaMallocFromPoolAsync(&dBuf1, allocBytes, pool, str), "ma1");
+            chk(cudaMallocFromPoolAsync(&dBuf2, allocBytes, pool, str), "ma2");
+            chk(cudaStreamSynchronize(str), "mas");
+        } else {
+            // MemPoolCreate failed despite attribute saying supported — fallback
+            allocType = "fallback";
+            chk(cudaMalloc(&dBuf1, allocBytes), "ma1");
+            chk(cudaMalloc(&dBuf2, allocBytes), "ma2");
+        }
     } else {
-        // Fallback: regular cudaMalloc + cudaHostAlloc
-        allocType = "fallback";
+        // Memory pools not supported — direct fallback
         chk(cudaMalloc(&dBuf1, allocBytes), "ma1");
         chk(cudaMalloc(&dBuf2, allocBytes), "ma2");
     }
