@@ -249,7 +249,43 @@ __global__ void fp64DmmaKernel(
     }
 }
 
+// ── Probe kernel to check if FP64 DMMA is supported ─────────────────────
+__global__ void fp64DmmaProbeKernel() {
+    if (threadIdx.x != 0) return;
 
+    double a0 = 1.0, a1 = 1.0, b0 = 1.0;
+    double c0 = 0.0, c1 = 0.0, c2 = 0.0, c3 = 0.0;
+
+    asm volatile(
+        "mma.sync.aligned.m16n8k4.row.col.f64.f64.f64.f64 "
+        "{%0, %1, %2, %3}, {%4, %5}, {%6}, {%7, %8, %9, %10};"
+        : "=d"(c0), "=d"(c1), "=d"(c2), "=d"(c3)
+        : "d"(a0), "d"(a1), "d"(b0), "d"(c0), "d"(c1), "d"(c2), "d"(c3)
+    );
+}
+
+static bool fp64DmmaSupported(int device) {
+    chk(cudaSetDevice(device), "probe_dev");
+
+    int major = 0, minor = 0;
+    chk(cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, device), "major");
+    chk(cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, device), "minor");
+    // mma.sync.aligned.f64 requires SM80+ (Ampere). Thor is SM110a.
+    if (major < 8 || (major == 8 && minor < 0)) return false;
+
+    cudaStream_t str;
+    chk(cudaStreamCreate(&str), "probe_stream");
+
+    fp64DmmaProbeKernel<<<1, 32, 0, str>>>();
+    cudaError_t e = cudaStreamSynchronize(str);
+    chk(cudaStreamDestroy(str), "probe_stream_destroy");
+
+    if (e != cudaSuccess) return false;
+    e = cudaGetLastError();
+    if (e != cudaSuccess) return false;
+
+    return true;
+}
 
 // ── Measure FP64 DMMA Dense ──────────────────────────────────────────────
 BenchResult measureFP64Dense(int device, int matDim, int iterations) {
@@ -355,7 +391,13 @@ static BenchResult makeStub(const std::string& reason) {
 
 std::vector<BenchResult> runFP64TensorBench(int device, int matDim, int iterations) {
     std::vector<BenchResult> results;
-    chk(cudaSetDevice(device), "dev");
+
+    // Probe FP64 DMMA support before launching
+    bool supported = fp64DmmaSupported(device);
+    if (!supported) {
+        results.push_back(makeStub("mma.sync.aligned.m16n8k4.f64 not supported by current driver/firmware"));
+        return results;
+    }
 
     try {
         results.push_back(measureFP64Dense(device, matDim, iterations));
@@ -371,7 +413,7 @@ std::vector<BenchResult> runFP64TensorBench(int device, int matDim, int iteratio
 BENCH_REGISTER_SUITE(fp64_tensor, "FP64 Tensor Core throughput (mma.sync.aligned DMMA)",
     [](deusridet::bench::BenchRunner&) -> std::vector<deusridet::bench::BenchResult> {
         try {
-            return deusridet::bench::runFP64TensorBench(0, 4096, 10);
+            return deusridet::bench::runFP64TensorBench(0, 128, 10);
         } catch (const std::exception& ex) {
             deusridet::bench::BenchResult r{};
             r.suite_name = "fp64_tensor";

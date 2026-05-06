@@ -42,8 +42,8 @@ __device__ static uint64_t buildSmemDesc(const void* ptr, int leadingDim, int st
 
     uint64_t desc = 0;
     desc  = (base >> 4) & 0x3FFF;                              // [0:14)
-    desc |= (leadingBytes & 0x3FFF) << 16;                     // [16:30)
-    desc |= (strideBytes & 0x3FFF) << 32;                      // [32:46)
+    desc |= ((leadingBytes >> 4) & 0x3FFF) << 16;              // [16:30)
+    desc |= ((strideBytes >> 4)  & 0x3FFF) << 32;              // [32:46)
     desc |= (1ULL) << 46;                                       // [46:48) version_=1 (Blackwell)
     desc |= (0ULL) << 49;                                       // [49:52) base_offset_=0
     desc |= (0ULL) << 52;                                       // [52:53) lbo_mode_=0 (legacy)
@@ -204,6 +204,38 @@ __global__ void int8MmaKernel(
     }
 }
 
+// ── Check if INT8 tcgen05.mma is supported ──────────────────────────────────
+static bool int8Supported(int device) {
+    chk(cudaSetDevice(device), "probe_dev");
+
+    int major = 0, minor = 0;
+    chk(cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, device), "major");
+    chk(cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, device), "minor");
+    if (major < 11) return false;
+
+    cudaStream_t str;
+    chk(cudaStreamCreate(&str), "probe_stream");
+
+    // Launch a minimal kernel to probe the instruction
+    int8MmaKernel<<<1, 32, TILE_M * TILE_K + TILE_K * TILE_N + 4, str>>>(
+        nullptr, nullptr, nullptr, TILE_M, TILE_N, TILE_K);
+    cudaError_t e = cudaStreamSynchronize(str);
+    chk(cudaStreamDestroy(str), "probe_stream_destroy");
+
+    if (e != cudaSuccess) {
+        cudaGetLastError(); // drain IllegalInstruction from probe
+        return false;
+    }
+
+    e = cudaGetLastError();
+    if (e != cudaSuccess) {
+        cudaGetLastError(); // drain
+        return false;
+    }
+
+    return true;
+}
+
 // ── Stub result builders ────────────────────────────────────────────────────
 BenchResult makeStubDense(const std::string& reason) {
     BenchResult res{};
@@ -335,20 +367,24 @@ BenchResult measureInt8Dense(int device, int matDim, int iterations) {
 // ── Public API ──────────────────────────────────────────────────────────────
 std::vector<BenchResult> runINT8TensorBench(int device, int matDim, int iterations) {
     std::vector<BenchResult> results;
-    chk(cudaSetDevice(device), "dev");
+
+    // Probe INT8 tcgen05.mma support before launching
+    bool supported = int8Supported(device);
+    if (!supported) {
+        results.push_back(makeStubDense("tcgen05.mma kind::i8 not supported by current driver/firmware"));
+        results.push_back(makeStubSparse("tcgen05.mma kind::i8 not supported by current driver/firmware"));
+        return results;
+    }
 
     try {
         results.push_back(measureInt8Dense(device, matDim, iterations));
     } catch (const std::exception& ex) {
         results.push_back(makeStubDense((std::string("exception: ") + ex.what()).c_str()));
-        cudaGetLastError(); // drain
-        results.push_back(makeStubSparse("tcgen05.mma.sp not supported (dense already failed)"));
-        cudaGetLastError(); // final drain
-        return results;
     }
 
     // Sparse INT8 via tcgen05.mma.sp is not yet implemented
     results.push_back(makeStubSparse("tcgen05.mma.sp kind::i8 2:4 sparse not yet implemented"));
+
     return results;
 }
 

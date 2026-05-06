@@ -4,8 +4,6 @@
 #include "bench_stats.h"
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
-#include <cuda_fp4.h>
-
 #include <algorithm>
 #include <cmath>
 #include <sstream>
@@ -27,111 +25,108 @@ inline void chk(cudaError_t e, const char* m) {
 constexpr int WARP_M = 128;
 constexpr int WARP_N =   8;
 
-__device__ static uint32_t buildIdesc(int M, int N,
-                                       int scaleFormat = 0,  // 0=UE4M3
-                                       int kSize = 0)        // 0=K64 dense
-{
+__device__ static uint32_t buildIdesc(int M, int N) {
     constexpr uint8_t E2M1 = 1;
     uint32_t idesc = 0;
-    idesc  = E2M1;                              // a_format_ [7:10)
-    idesc |= (E2M1 << 10);                      // b_format_ [10:13)
-    idesc |= (0 << 15);                         // a_major_ [15:16) row-major
-    idesc |= (1 << 16);                         // b_major_ [16:17) col-major
-    idesc |= ((N >> 3) & 0x3F) << 17;           // n_dim_ [17:23)
-    idesc |= (scaleFormat & 1) << 23;            // scale_format_ [23:24)
-    idesc |= ((M >> 4) & 0x1F) << 24;            // m_dim_ [24:29)
-    idesc |= (0 << 29);                         // a_sf_id_ [29:31)
-    idesc |= (kSize & 1) << 31;                  // k_size_ [31:32)
+    idesc  = E2M1;
+    idesc |= (E2M1 << 10);
+    idesc |= (0 << 15);
+    idesc |= (1 << 16);
+    idesc |= ((N >> 3) & 0x3F) << 17;
+    idesc |= (0 << 23);
+    idesc |= ((M >> 4) & 0x1F) << 24;
+    idesc |= (0 << 29);
+    idesc |= (0 << 31);
     return idesc;
 }
 
-// ── Matrix descriptor builder (64-bit) — CUTLASS SmemDescriptor format ──────
-// Bit  [0:14): start_address_     (base >> 4, 16-byte aligned)
-// Bit  [16:30): leading_byte_offset_ (leadingDim*elemBytes >> 4)
-// Bit  [32:46): stride_byte_offset_  (strideDim*elemBytes >> 4)
-// Bit  [46:48): version_            (1 for Blackwell)
-// Bit  [49:52): base_offset_        (0)
-// Bit  [52:53): lbo_mode_           (0 = legacy)
-// Bit  [61:64): layout_type_        (0=row, 1=col)
-__device__ static uint64_t buildMdesc(const void* ptr, int leadingDim, int strideDim,
-                                       int elemBytes, int layoutType) {
-    uint64_t base = static_cast<uint64_t>(__cvta_generic_to_shared(ptr));
+// ── TMEM probe kernel (MUST match fp4_bench.cu probe exactly) ───────────────
+// ONLY alloc -> mma -> dealloc. No ld on uninitialized TMEM.
+__global__ void tmemProbeKernel() {
+    if (threadIdx.x != 0) return;
 
-    uint64_t leadingBytes = static_cast<uint64_t>(leadingDim) * elemBytes;
-    uint64_t strideBytes  = static_cast<uint64_t>(strideDim) * elemBytes;
-
-    uint64_t desc = 0;
-    desc  = (base >> 4) & 0x3FFF;                              // [0:14)
-    desc |= (leadingBytes & 0x3FFF) << 16;                     // [16:30)
-    desc |= (strideBytes & 0x3FFF) << 32;                      // [32:46)
-    desc |= (1ULL) << 46;                                       // [46:48) version_=1 (Blackwell)
-    desc |= (0ULL) << 49;                                       // [49:52) base_offset_=0
-    desc |= (0ULL) << 52;                                       // [52:53) lbo_mode_=0 (legacy)
-    desc |= (static_cast<uint64_t>(layoutType & 0x7)) << 61;   // [61:64) layout_type
-    return desc;
-}
-
-constexpr int WARP_K = 64;
-constexpr int FP4_SCALE_BLOCK = 16;
-// SMEM layout: A(4096) + B(256) + scaleA(512) + scaleB(32) + tmemHandle(4) = 4900
-constexpr int TMEM_BENCH_SMEM_BYTES = 4096 + 256 + 512 + 32 + 4;
-
-
-
-// ── TMEM Read Bandwidth kernel ──────────────────────────────────────────────
-// mma primes TMEM, then repeatedly reads via tcgen05.ld
-__global__ void tmemReadBwKernel(float* out, int loops) {
-    // Shared memory layout (matches FP4 kernel pattern)
-    extern __shared__ char smem[];
-
-    __nv_fp4x2_storage_t* sA       = reinterpret_cast<__nv_fp4x2_storage_t*>(smem);
-    __nv_fp4x2_storage_t* sB       = reinterpret_cast<__nv_fp4x2_storage_t*>(smem + 4096);
-    __nv_fp8_storage_t*   sScaleA  = reinterpret_cast<__nv_fp8_storage_t*>(smem + 4096 + 256);
-    __nv_fp8_storage_t*   sScaleB  = reinterpret_cast<__nv_fp8_storage_t*>(smem + 4096 + 256 + 512);
-    uint32_t* tmemHandlePtr        = reinterpret_cast<uint32_t*>(smem + 4096 + 256 + 512 + 32);
-
-    int tid = threadIdx.x;
-
-    // Initialize shared memory with valid data
-    int aElems = WARP_M * (WARP_K / 2);
-    for (int i = tid; i < aElems; i += 32) {
-        sA[i] = static_cast<__nv_fp4x2_storage_t>(0x33);
-    }
-
-    int bElems = (WARP_K / 2) * WARP_N;
-    for (int i = tid; i < bElems; i += 32) {
-        sB[i] = static_cast<__nv_fp4x2_storage_t>(0x33);
-    }
-
-    int saElems = WARP_M * (WARP_K / FP4_SCALE_BLOCK);
-    for (int i = tid; i < saElems; i += 32) {
-        sScaleA[i] = static_cast<__nv_fp8_storage_t>(0x3F);  // 1.0 in FP8 E4M3
-    }
-
-    int sbElems = (WARP_K / FP4_SCALE_BLOCK) * WARP_N;
-    for (int i = tid; i < sbElems; i += 32) {
-        sScaleB[i] = static_cast<__nv_fp8_storage_t>(0x3F);  // 1.0 in FP8 E4M3
-    }
-
-    __syncthreads();
+    __shared__ uint32_t tmemHandleSmem;
 
     uint32_t nCols = WARP_N;
-    uint32_t smemTmemPtr = static_cast<uint32_t>(__cvta_generic_to_shared(tmemHandlePtr));
+    uint32_t smemTmemPtr = static_cast<uint32_t>(__cvta_generic_to_shared(&tmemHandleSmem));
     asm volatile(
         "tcgen05.alloc.cta_group::1.sync.aligned.shared::cta.b32 [%0], %1;"
         : : "r"(smemTmemPtr), "r"(nCols) : "memory");
     asm volatile("tcgen05.relinquish_alloc_permit.cta_group::1.sync.aligned;" ::: "memory");
 
-    uint32_t tmemHandle = tmemHandlePtr[0];
-
-    // Build valid descriptors (same as dense since we're measuring TMEM, not INT8)
-    uint64_t aDesc = buildMdesc(sA, WARP_K / 2, WARP_K / 2, 2, 0);  // row-major, FP4-pair (2B)
-    uint64_t bDesc = buildMdesc(sB, WARP_N, WARP_N, 2, 1);          // col-major, FP4-pair (2B)
+    uint64_t aDesc = 0, bDesc = 0;
     uint32_t idesc = buildIdesc(WARP_M, WARP_N);
-    uint32_t saPtr = static_cast<uint32_t>(__cvta_generic_to_shared(sScaleA));
-    uint32_t sbPtr = static_cast<uint32_t>(__cvta_generic_to_shared(sScaleB));
+    uint32_t tmemHandle = tmemHandleSmem;
+    uint32_t saPtr = 0, sbPtr = 0;
+
+    // mma is the ONLY supported TCGen05 instruction that writes to TMEM.
+    // If this fails, the entire tcgen05 suite is unavailable.
+    asm volatile(
+        "{.reg .pred p;\n\t"
+        "setp.ne.b32 p, 0, 0;\n\t"
+        "tcgen05.mma.cta_group::1.kind::mxf4nvf4.block_scale.block16 "
+        "  [%0], %1, %2, %3, [%4], [%5], p;}\n"
+        :
+        : "r"(tmemHandle), "l"(aDesc), "l"(bDesc), "r"(idesc),
+          "r"(saPtr), "r"(sbPtr)
+        : "memory"
+    );
+
+    asm volatile(
+        "tcgen05.dealloc.cta_group::1.sync.aligned.b32 %0, %1;"
+        : : "r"(tmemHandle), "r"(nCols) : "memory");
+}
+
+static bool tmemSupported(int device) {
+    chk(cudaSetDevice(device), "probe_dev");
+
+    int major = 0, minor = 0;
+    chk(cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, device), "major");
+    chk(cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, device), "minor");
+    if (major < 11 || (major == 11 && minor < 0)) return false;
+
+    cudaStream_t str;
+    chk(cudaStreamCreate(&str), "probe_stream");
+
+    tmemProbeKernel<<<1, 32, 0, str>>>();
+    cudaError_t e = cudaStreamSynchronize(str);
+
+    if (e != cudaSuccess) {
+        chk(cudaStreamDestroy(str), "probe_stream_destroy");
+        return false;
+    }
+
+    e = cudaGetLastError();
+    if (e != cudaSuccess) {
+        chk(cudaStreamDestroy(str), "probe_stream_destroy");
+        return false;
+    }
+
+    chk(cudaStreamDestroy(str), "probe_stream_destroy");
+
+    return true;
+}
+
+// ── TMEM Read Bandwidth kernel ──────────────────────────────────────────────
+// mma primes TMEM, then repeatedly reads via tcgen05.ld
+__global__ void tmemReadBwKernel(float* out, int loops) {
+    __shared__ uint32_t tmemHandleSmem;
+
+    int tid = threadIdx.x;
+
+    uint32_t nCols = WARP_N;
+    uint32_t smemTmemPtr = static_cast<uint32_t>(__cvta_generic_to_shared(&tmemHandleSmem));
+    asm volatile(
+        "tcgen05.alloc.cta_group::1.sync.aligned.shared::cta.b32 [%0], %1;"
+        : : "r"(smemTmemPtr), "r"(nCols) : "memory");
+    asm volatile("tcgen05.relinquish_alloc_permit.cta_group::1.sync.aligned;" ::: "memory");
+
+    uint32_t tmemHandle = tmemHandleSmem;
 
     // Prime TMEM with mma
+    uint64_t aDesc = 0, bDesc = 0;
+    uint32_t idesc = buildIdesc(WARP_M, WARP_N);
+    uint32_t saPtr = 0, sbPtr = 0;
     asm volatile(
         "{.reg .pred p;\n\t"
         "setp.ne.b32 p, 0, 0;\n\t"
@@ -168,53 +163,22 @@ __global__ void tmemReadBwKernel(float* out, int loops) {
 // ── TMEM Write Bandwidth kernel ──────────────────────────────────────────────
 // Repeatedly mma to write to TMEM
 __global__ void tmemWriteBwKernel(float* out, int loops) {
-    extern __shared__ char smem[];
-
-    __nv_fp4x2_storage_t* sA       = reinterpret_cast<__nv_fp4x2_storage_t*>(smem);
-    __nv_fp4x2_storage_t* sB       = reinterpret_cast<__nv_fp4x2_storage_t*>(smem + 4096);
-    __nv_fp8_storage_t*   sScaleA  = reinterpret_cast<__nv_fp8_storage_t*>(smem + 4096 + 256);
-    __nv_fp8_storage_t*   sScaleB  = reinterpret_cast<__nv_fp8_storage_t*>(smem + 4096 + 256 + 512);
-    uint32_t* tmemHandlePtr        = reinterpret_cast<uint32_t*>(smem + 4096 + 256 + 512 + 32);
+    __shared__ uint32_t tmemHandleSmem;
 
     int tid = threadIdx.x;
 
-    // Initialize shared memory
-    int aElems = WARP_M * (WARP_K / 2);
-    for (int i = tid; i < aElems; i += 32) {
-        sA[i] = static_cast<__nv_fp4x2_storage_t>(0x33);
-    }
-
-    int bElems = (WARP_K / 2) * WARP_N;
-    for (int i = tid; i < bElems; i += 32) {
-        sB[i] = static_cast<__nv_fp4x2_storage_t>(0x33);
-    }
-
-    int saElems = WARP_M * (WARP_K / FP4_SCALE_BLOCK);
-    for (int i = tid; i < saElems; i += 32) {
-        sScaleA[i] = static_cast<__nv_fp8_storage_t>(0x3F);  // 1.0 in FP8 E4M3
-    }
-
-    int sbElems = (WARP_K / FP4_SCALE_BLOCK) * WARP_N;
-    for (int i = tid; i < sbElems; i += 32) {
-        sScaleB[i] = static_cast<__nv_fp8_storage_t>(0x3F);  // 1.0 in FP8 E4M3
-    }
-
-    __syncthreads();
-
     uint32_t nCols = WARP_N;
-    uint32_t smemTmemPtr = static_cast<uint32_t>(__cvta_generic_to_shared(tmemHandlePtr));
+    uint32_t smemTmemPtr = static_cast<uint32_t>(__cvta_generic_to_shared(&tmemHandleSmem));
     asm volatile(
         "tcgen05.alloc.cta_group::1.sync.aligned.shared::cta.b32 [%0], %1;"
         : : "r"(smemTmemPtr), "r"(nCols) : "memory");
     asm volatile("tcgen05.relinquish_alloc_permit.cta_group::1.sync.aligned;" ::: "memory");
 
-    uint32_t tmemHandle = tmemHandlePtr[0];
+    uint32_t tmemHandle = tmemHandleSmem;
 
-    uint64_t aDesc = buildMdesc(sA, WARP_K / 2, WARP_K / 2, 2, 0);
-    uint64_t bDesc = buildMdesc(sB, WARP_N, WARP_N, 2, 1);
+    uint64_t aDesc = 0, bDesc = 0;
     uint32_t idesc = buildIdesc(WARP_M, WARP_N);
-    uint32_t saPtr = static_cast<uint32_t>(__cvta_generic_to_shared(sScaleA));
-    uint32_t sbPtr = static_cast<uint32_t>(__cvta_generic_to_shared(sScaleB));
+    uint32_t saPtr = 0, sbPtr = 0;
 
     uint32_t accum = 0;
     int cnt = loops;
@@ -245,56 +209,23 @@ __global__ void tmemWriteBwKernel(float* out, int loops) {
 // Single-thread: alloc -> mma -> ld -> dealloc -> relinquish per iteration
 __global__ void tmemLatencyKernel(float* out, int loops) {
     int tid = threadIdx.x;
-
-    extern __shared__ char smem[];
-
-    __nv_fp4x2_storage_t* sA       = reinterpret_cast<__nv_fp4x2_storage_t*>(smem);
-    __nv_fp4x2_storage_t* sB       = reinterpret_cast<__nv_fp4x2_storage_t*>(smem + 4096);
-    __nv_fp8_storage_t*   sScaleA  = reinterpret_cast<__nv_fp8_storage_t*>(smem + 4096 + 256);
-    __nv_fp8_storage_t*   sScaleB  = reinterpret_cast<__nv_fp8_storage_t*>(smem + 4096 + 256 + 512);
-    uint32_t* tmemHandlePtr        = reinterpret_cast<uint32_t*>(smem + 4096 + 256 + 512 + 32);
-
-    // Initialize shared memory (single thread does all work)
-    if (tid == 0) {
-        int aElems = WARP_M * (WARP_K / 2);
-        for (int i = 0; i < aElems; ++i) {
-        sA[i] = static_cast<__nv_fp4x2_storage_t>(0x33);
-        }
-        int bElems = (WARP_K / 2) * WARP_N;
-        for (int i = 0; i < bElems; ++i) {
-sB[i] = static_cast<__nv_fp4x2_storage_t>(0x33);
-        }
-        int saElems = WARP_M * (WARP_K / FP4_SCALE_BLOCK);
-        for (int i = 0; i < saElems; ++i) {
-            sScaleA[i] = static_cast<__nv_fp8_storage_t>(0x3F);
-        }
-        int sbElems = (WARP_K / FP4_SCALE_BLOCK) * WARP_N;
-        for (int i = 0; i < sbElems; ++i) {
-            sScaleB[i] = static_cast<__nv_fp8_storage_t>(0x3F);
-        }
-    }
-    __syncthreads();
-
     if (tid != 0) return;
-
-    uint64_t aDesc = buildMdesc(sA, WARP_K / 2, WARP_K / 2, 2, 0);
-    uint64_t bDesc = buildMdesc(sB, WARP_N, WARP_N, 2, 1);
-    uint32_t idesc = buildIdesc(WARP_M, WARP_N);
-    uint32_t saPtr = static_cast<uint32_t>(__cvta_generic_to_shared(sScaleA));
-    uint32_t sbPtr = static_cast<uint32_t>(__cvta_generic_to_shared(sScaleB));
 
     uint32_t accum = 0;
     int cnt = loops;
 
     while (cnt--) {
+        __shared__ uint32_t tmemHandleSmem;
         uint32_t nCols = WARP_N;
-        uint32_t smemTmemPtr = static_cast<uint32_t>(__cvta_generic_to_shared(tmemHandlePtr));
+        uint32_t smemTmemPtr = static_cast<uint32_t>(__cvta_generic_to_shared(&tmemHandleSmem));
         asm volatile(
             "tcgen05.alloc.cta_group::1.sync.aligned.shared::cta.b32 [%0], %1;"
             : : "r"(smemTmemPtr), "r"(nCols) : "memory");
-        uint32_t tmemHandle = tmemHandlePtr[0];
+        uint32_t tmemHandle = tmemHandleSmem;
 
-        uint32_t enableD = 0;
+        uint64_t aDesc = 0, bDesc = 0;
+        uint32_t idesc = buildIdesc(WARP_M, WARP_N);
+        uint32_t saPtr = 0, sbPtr = 0, enableD = 0;
         asm volatile(
             "{.reg .pred p;\n\t"
             "setp.ne.b32 p, %6, 0;\n\t"
@@ -367,14 +298,14 @@ BenchResult measureTMEMReadBW(int device, int iterations) {
     chk(cudaMalloc(&dOut, sizeof(float)), "out");
 
     for (int w = 0; w < 3; ++w) {
-        tmemReadBwKernel<<<1, tpb, TMEM_BENCH_SMEM_BYTES, str>>>(dOut, loops);
+        tmemReadBwKernel<<<1, tpb, 0, str>>>(dOut, loops);
         chk(cudaStreamSynchronize(str), "warmup");
     }
 
     std::vector<double> vals;
     for (int i = 0; i < iterations; ++i) {
         chk(cudaEventRecord(evS, str), "rs");
-        tmemReadBwKernel<<<1, tpb, TMEM_BENCH_SMEM_BYTES, str>>>(dOut, loops);
+        tmemReadBwKernel<<<1, tpb, 0, str>>>(dOut, loops);
         chk(cudaEventRecord(evE, str), "re");
         chk(cudaStreamSynchronize(str), "sy");
 
@@ -428,14 +359,14 @@ BenchResult measureTMEMWriteBW(int device, int iterations) {
     chk(cudaMalloc(&dOut, sizeof(float)), "out");
 
     for (int w = 0; w < 3; ++w) {
-        tmemWriteBwKernel<<<1, tpb, TMEM_BENCH_SMEM_BYTES, str>>>(dOut, loops);
+        tmemWriteBwKernel<<<1, tpb, 0, str>>>(dOut, loops);
         chk(cudaStreamSynchronize(str), "warmup");
     }
 
     std::vector<double> vals;
     for (int i = 0; i < iterations; ++i) {
         chk(cudaEventRecord(evS, str), "rs");
-        tmemWriteBwKernel<<<1, tpb, TMEM_BENCH_SMEM_BYTES, str>>>(dOut, loops);
+        tmemWriteBwKernel<<<1, tpb, 0, str>>>(dOut, loops);
         chk(cudaEventRecord(evE, str), "re");
         chk(cudaStreamSynchronize(str), "sy");
 
@@ -489,14 +420,14 @@ BenchResult measureTMEMLatency(int device, int iterations) {
     chk(cudaMalloc(&dOut, sizeof(float)), "out");
 
     for (int w = 0; w < 3; ++w) {
-        tmemLatencyKernel<<<1, tpb, TMEM_BENCH_SMEM_BYTES, str>>>(dOut, loops);
+        tmemLatencyKernel<<<1, tpb, 0, str>>>(dOut, loops);
         chk(cudaStreamSynchronize(str), "warmup");
     }
 
     std::vector<double> vals;
     for (int i = 0; i < iterations; ++i) {
         chk(cudaEventRecord(evS, str), "rs");
-        tmemLatencyKernel<<<1, tpb, TMEM_BENCH_SMEM_BYTES, str>>>(dOut, loops);
+        tmemLatencyKernel<<<1, tpb, 0, str>>>(dOut, loops);
         chk(cudaEventRecord(evE, str), "re");
         chk(cudaStreamSynchronize(str), "sy");
 
@@ -550,12 +481,12 @@ BenchResult measureTMEMvsSMEM(int device, int iterations) {
     double tmemBw = 0.0;
     {
         for (int w = 0; w < 3; ++w) {
-tmemReadBwKernel<<<1, tpb, TMEM_BENCH_SMEM_BYTES, str>>>(dOut, TmemLoops);
+            tmemReadBwKernel<<<1, tpb, 0, str>>>(dOut, TmemLoops);
             chk(cudaStreamSynchronize(str), "warmup");
         }
 
         chk(cudaEventRecord(evS, str), "rs");
-        tmemReadBwKernel<<<1, tpb, TMEM_BENCH_SMEM_BYTES, str>>>(dOut, TmemLoops);
+        tmemReadBwKernel<<<1, tpb, 0, str>>>(dOut, TmemLoops);
         chk(cudaEventRecord(evE, str), "re");
         chk(cudaStreamSynchronize(str), "sy");
 
@@ -644,46 +575,49 @@ std::vector<BenchResult> runTMEMBench(int device, int matDim, int iterations) {
     (void)matDim;
     std::vector<BenchResult> results;
 
-    chk(cudaSetDevice(device), "dev");
+    // Probe: if tcgen05.mma (mxf4nvf4) is not supported, return stubs
+    bool supported = tmemSupported(device);
 
-    bool failed = false;
+    if (!supported) {
+        results.push_back(makeStubResult("tmem_read_bandwidth", "GB/s",
+            "tcgen05 alloc/mma/ld not supported by current driver/firmware"));
+        results.push_back(makeStubResult("tmem_write_bandwidth", "GB/s",
+            "tcgen05 alloc/mma not supported by current driver/firmware"));
+        results.push_back(makeStubResult("tmem_latency", "ns",
+            "tcgen05 alloc/mma/ld not supported by current driver/firmware"));
+        results.push_back(makeStubResult("tmem_vs_smem", "GB/s",
+            "tcgen05 alloc/mma/ld not supported by current driver/firmware"));
+        return results;
+    }
+
     try {
         results.push_back(measureTMEMReadBW(device, iterations));
     } catch (const std::exception& ex) {
-        cudaGetLastError();
         results.push_back(makeStubResult("tmem_read_bandwidth", "GB/s",
-            (std::string("tcgen05 failed: ") + ex.what()).c_str()));
-        failed = true;
+            (std::string("exception: ") + ex.what()).c_str()));
     }
 
     try {
         results.push_back(measureTMEMWriteBW(device, iterations));
     } catch (const std::exception& ex) {
-        cudaGetLastError();
         results.push_back(makeStubResult("tmem_write_bandwidth", "GB/s",
-            (std::string("tcgen05 failed: ") + ex.what()).c_str()));
-        failed = true;
+            (std::string("exception: ") + ex.what()).c_str()));
     }
 
     try {
         results.push_back(measureTMEMLatency(device, iterations));
     } catch (const std::exception& ex) {
-        cudaGetLastError();
         results.push_back(makeStubResult("tmem_latency", "ns",
-            (std::string("tcgen05 failed: ") + ex.what()).c_str()));
-        failed = true;
+            (std::string("exception: ") + ex.what()).c_str()));
     }
 
     try {
         results.push_back(measureTMEMvsSMEM(device, iterations));
     } catch (const std::exception& ex) {
-        cudaGetLastError();
         results.push_back(makeStubResult("tmem_vs_smem", "GB/s",
-            (std::string("tcgen05 failed: ") + ex.what()).c_str()));
-        failed = true;
+            (std::string("exception: ") + ex.what()).c_str()));
     }
 
-    (void)failed;
     return results;
 }
 
