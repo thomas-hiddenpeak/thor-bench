@@ -71,9 +71,11 @@ bench/suites/
 │   ├── sasp_bench.{cu,h}             # FP8 dense + 2:4 sparse matmul
 │   ├── fp4_bench.{cu,h}              # NVFP4 dense/sparse GEMM via cublasLt
 │   ├── tmem_bench.{cu,h}             # TCGen05 TMEM bandwidth (SMEM proxy)
-│   ├── tcgen05_fp16_bench.{cu,h}     # TCGen05 FP16/BF16 GEMM
-│   ├── fp8_scalar_bench.{cu,h}              # Scalar FP8 GEMM (no Tensor Core)
-│   └── int8_scalar_bench.{cu,h}      # Scalar INT8 GEMM (no Tensor Core)
+│   ├── fp8_scalar_bench.{cu,h}       # Scalar FP8 GEMM (no Tensor Core)
+│   ├── int8_scalar_bench.{cu,h}      # Scalar INT8 GEMM (no Tensor Core)
+│   ├── cublas_bench.{cu,h}           # cuBLAS SGEMM/DGEMM (strided batched)
+│   ├── fp64_tensor_bench.{cu,h}      # WMMA FP64 (guarded on CUDA 13.0 API)
+│   └── int8_tensor_bench.{cu,h}      # INT8 Tensor Core (stub, CUDA 13.0 API incomplete)
 ├── memory/
 │   ├── tegra_memory.{cu,h}           # Device/Pinned/Registered/Pageable
 │   ├── tma_copy.{cu,h}               # TMA async copy via mempool
@@ -84,7 +86,8 @@ bench/suites/
 │   ├── mbarrier.{cu,h}               # cuda::barrier latency
 │   ├── cluster_sync.{cu,h}           # __syncwarps + cluster_barrier
 │   ├── kernel_launch.{cu,h}          # Kernel launch + CUDA Graph
-│   └── warp_primitives.{cu,h}        # Warp shuffle, ballot, activemask
+│   ├── warp_primitives.{cu,h}        # Warp shuffle, ballot, activemask
+│   └── atomic_bench.{cu,h}           # Atomic op latency (Add/CAS/Max/Min)
 ├── system/
 │   ├── host_device_transfer.{cu,h}   # H2D/D2H (integrated memory)
 │   ├── thermal_throttle.{cu,h}       # Sustained perf under thermal
@@ -93,7 +96,8 @@ bench/suites/
 │   └── mig_bench.{cpp,h}             # MIG partitioning overhead
 ├── encode/
 │   ├── h264_encode_bench.{cpp,h}     # NVENC H.264
-│   └── hevc_encode_bench.{cpp,h}     # NVENC HEVC encoding
+│   ├── hevc_encode_bench.{cpp,h}     # NVENC HEVC encoding
+│   └── nvjpeg_bench.{cpp,h}          # NVJPEG encode/decode (stub, not on Tegra)
 ├── decode/
 │   ├── h264_decode_bench.{cpp,h}     # NVDEC H.264
 │   ├── hevc_decode_bench.{cpp,h}     # NVDEC HEVC decoding

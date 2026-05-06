@@ -5,6 +5,6 @@
 
 namespace deusridet::bench {
 
-std::vector<BenchResult> runTCGen05FP16Bench(int device, int matDim, int iterations);
+std::vector<BenchResult> runFP64TensorBench(int device, int matDim, int iterations);
 
 }

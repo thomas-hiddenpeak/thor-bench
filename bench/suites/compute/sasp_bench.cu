@@ -243,7 +243,7 @@ std::vector<BenchResult> runSASPBench(int device, int matDim, int iterations) {
 
 } // namespace deusridet::bench
 
-BENCH_REGISTER_SUITE(sasp, "FP8 dense matmul + 2:4 structured sparse (cuSPARSELt)",
+BENCH_REGISTER_SUITE(sasp, "FP8 dense matmul + 2:4 structured sparse (scalar kernel, no Tensor Core)",
     [](deusridet::bench::BenchRunner&) -> std::vector<deusridet::bench::BenchResult> {
         return deusridet::bench::runSASPBench(0, 512, 10);
     });

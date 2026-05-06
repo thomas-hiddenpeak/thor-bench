@@ -46,7 +46,7 @@ All suites report `peak_pct` — percentage of T5000 theoretical maximum. See [A
 |-------|--------|---------|--------|
 | `memory` | LPDDR5X bandwidth | GB/s (read/write/copy) + shared mem crossbar | ✅ |
 | `sm_compute` | SM FP32/FP64 | GFLOP/s (FMA + register pressure) | ✅ |
-| `tensor` | Tensor Core WMMA | TFLOP/s (FP16) | ✅ (BF16 stub — CUDA 13.0 limitation) |
+| `tensor` | FP16/BF16 WMMA (tcgen05.mma) | TFLOP/s | ✅ |
 | `sasp` | FP8 dense + 2:4 sparse | TFLOP/s | ✅ FP8 dense (scalar); sparse stub (needs tcgen05) |
 | `tegra_memory` | SoC memory architecture | GB/s (Device/Pinned/Registered/Pageable) | ✅ |
 | `tma_copy` | TMA async copy | GB/s (H2D/D2H/D2D) | ✅ Fallback — mempool unsupported, uses cudaMalloc |
@@ -54,19 +54,23 @@ All suites report `peak_pct` — percentage of T5000 theoretical maximum. See [A
 | `l2_cache` | L2 cache hit/miss bandwidth | GB/s (hit/miss) | ✅ |
 | `shared_carveout` | L1/shared memory carveout ratio | GB/s (carveout 0–100) | ✅ |
 | `fp4` | NVFP4 dense/sparse GEMM | TFLOP/s (via cublasLt) | ✅ |
-| `tcgen05_fp16` | TCGen05 FP16/BF16 block-scaled GEMM | TFLOP/s | ✅ |
 | `fp8_scalar` | Scalar FP8 GEMM (no Tensor Core) | TFLOP/s | ⚠️ Scalar fallback; sparse stub |
 | `int8_scalar` | Scalar INT8 GEMM (no Tensor Core) | TOP/s | ⚠️ Scalar fallback; sparse stub |
 | `tmem` | TCGen05 TMEM bandwidth | GB/s | ⚠️ SMEM proxy (tcgen05 ld/st requires SMEM descriptors) |
+| `cublas` | cuBLAS SGEMM/DGEMM | TFLOP/s (strided batched) | ✅ cuBLASLt stub (CUDA 13.0 API changed) |
+| `fp64_tensor` | WMMA FP64 | TFLOP/s | ⚠️ Stub (CUDA 13.0 `__CUDA_WmmaSupportDouble__` guard) |
+| `int8_tensor` | INT8 Tensor Core WMMA | TOP/s | ⚠️ Stub (CUDA 13.0 `nvcuda::wmma` INT8 incomplete) |
 | `mbarrier` | cuda::barrier latency | ns | ✅ 6 tests (64-1024 threads + syncthreads baseline) |
 | `cluster_sync` | Cluster sync latency | ns (__syncthreads) | ✅ (cluster_barrier stub) |
 | `kernel_launch` | Kernel launch + CUDA Graph | µs | ✅ |
 | `warp_primitives` | Warp shuffle, ballot, activemask | ns | ✅ |
+| `atomic` | Atomic op latency (Add/CAS/Max/Min) | ns | ✅ |
 | `h264_encode` | NVENC H.264 encoding | FPS (1080p/4K) | ✅ |
 | `h264_decode` | NVDEC H.264 decoding | FPS (1080p/4K) | ✅ |
 | `hevc_encode` | NVENC HEVC encoding | FPS (1080p/4K) | ✅ |
 | `hevc_decode` | NVDEC HEVC decoding | FPS (1080p/4K) | ✅ |
 | `av1_decode` | NVDEC AV1 decoding | FPS (1080p/4K) | ✅ |
+| `nvjpeg` | NVJPEG encode/decode | FPS | ⚠️ Stub (NVJPEG not available on Tegra) |
 | `arm_compute` | CPU FP32 baseline | GFLOP/s (NEON/SVE, multi-threaded) | ✅ |
 | `arm_sve2` | ARM CPU NEON fallback | GFLOP/s (FP32/FP16/INT8) | ⚠️ NEON fallback (SVE2 intrinsics unavailable) |
 | `host_device_transfer` | Host↔Device transfer | GB/s (integrated SoC memory) | ✅ |

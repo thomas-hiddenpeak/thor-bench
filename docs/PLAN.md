@@ -1,6 +1,6 @@
 # thor-bench — Development Plan
 
-Last updated: 2026-05-05
+Last updated: 2026-05-06
 
 ## Live Benchmark Results (Thor DevKit, CUDA 13.0.48)
 
@@ -12,12 +12,13 @@ Last updated: 2026-05-05
 | `sm_compute` — RegPressure | 4492 GFLOPS | 55.8% |
 | `tensor` — FP16 WMMA | 402 TFLOPS | — |
 | `tensor` — BF16 WMMA | 400 TFLOPS | — |
-| `tcgen05_fp16` — FP16 dense | 397 TFLOPS | — |
-| `tcgen05_fp16` — BF16 dense | 400 TFLOPS | — |
 | `tcgen05_fp8` — FP8 dense (scalar) | 0.22 TFLOP/s | 0.04% |
-| `int8_tensor` — INT8 dense (scalar) | 0.22 TOP/s | — |
+| `int8_scalar` — INT8 dense (scalar) | 0.22 TOP/s | — |
 | `fp4` — NVFP4 dense (m2048) | 595 TFLOPS | 57.5% |
 | `fp4` — NVFP4 sparse (m2048) | 480 TFLOPS | 23.2% |
+| `cublas` — SGEMM FP32 | — | — |
+| `fp64_tensor` — WMMA FP64 | — | — |
+| `int8_tensor` — INT8 TC | — | — |
 | `mig` — full GPU FP32 GEMM | 5.65 TFLOPS | 70.1% |
 
 ### Memory
@@ -48,6 +49,11 @@ Last updated: 2026-05-05
 | `kernel_launch` — CUDA Graph replay | 4.7 µs |
 | `warp_primitives` — shfl | 0.07 ns |
 | `warp_primitives` — ballot | 0.08 ns |
+| `atomic` — Add int | — |
+| `atomic` — Add float | — |
+| `atomic` — CAS | — |
+| `atomic` — Max | — |
+| `atomic` — Min | — |
 
 ### Encoder/Decoder
 | Suite | Result |
@@ -92,6 +98,7 @@ Last updated: 2026-05-05
 | `cluster_sync` | ✅ Done | __syncthreads (5 sizes) + cluster_barrier (`cg::cluster_group::sync()`) |
 | `kernel_launch` | ✅ Done | Empty/small launch + CUDA Graph capture/replay/warm (5 tests) |
 | `warp_primitives` | ✅ Done | shfl, ballot, activemask |
+| `atomic` | ✅ Done | Atomic op latency (Add int/Add float/CAS/Max/Min, 5 tests) |
 | `host_device_transfer` | ✅ Done | H2D/D2H with metadata["integrated"]="true" |
 
 ### Phase 2 — Compute ✅
@@ -100,10 +107,12 @@ Last updated: 2026-05-05
 | `sm_compute` | ✅ Done | FP32 FMA + FP64 FMA + register pressure kernel |
 | `tensor` | ✅ Done | FP16 WMMA ✅; BF16 via FP16 reinterpret (400 TFLOP/s) |
 | `sasp` | ✅ Partial | FP8 dense ✅ (scalar); sparse stub — requires tcgen05.mma.sp |
-| `tcgen05_fp16` | ✅ Done | nvcuda::wmma → tcgen05.mma on SM110a, FP16 397 + BF16 400 TFLOP/s |
-| `tcgen05_fp8` | ✅ Partial | Scalar FP8 dense (0.22 TFLOP/s); sparse stub |
-| `int8_tensor` | ✅ Partial | Scalar INT8 dense (0.22 TOP/s); sparse stub |
+| `fp8_scalar` | ✅ Partial | Scalar FP8 dense (0.22 TFLOP/s); sparse stub |
+| `int8_scalar` | ✅ Partial | Scalar INT8 dense (0.22 TOP/s); sparse stub |
 | `fp4` | ✅ Done | NVFP4 dense/sparse via cublasLt |
+| `cublas` | ✅ Partial | SGEMM/DGEMM/strided-batched SGEMM working; cuBLASLt stub (CUDA 13.0 API) |
+| `fp64_tensor` | ⚠️ Stub | WMMA FP64 guarded on `__CUDA_WmmaSupportDouble__` |
+| `int8_tensor` | ⚠️ Stub | INT8 TC (CUDA 13.0 `nvcuda::wmma` INT8 incomplete) |
 
 ### Phase 3 — Sustained ✅
 | Suite | Status | Notes |
@@ -142,35 +151,42 @@ Last updated: 2026-05-05
 | # | Issue | Severity | Status |
 |---|-------|----------|--------|
 | 1 | `sasp_fp8_sparse`: 2:4 sparse requires tcgen05.mma.sp with sparsity metadata descriptor → stub | Medium | Resolved (stub) |
-| 2 | `tcgen05_fp8_sparse`: Same as above → stub | Medium | Resolved (stub) |
-| 3 | `int8_tensor_sparse`: INT8 2:4 sparse requires tcgen05.mma.sp → stub | Medium | Resolved (stub) |
+| 2 | `fp8_scalar_sparse`: Same as above → stub | Medium | Resolved (stub) |
+| 3 | `int8_scalar_sparse`: INT8 2:4 sparse requires tcgen05.mma.sp → stub | Medium | Resolved (stub) |
 | 4 | `mig_0_4tpc`, `mig_1_6tpc`: MIG partitioning requires nvidia-smi setup → stub | Low | Resolved (stub, DevKit limitation) |
 | 5 | `tmem`: TMEM benchmarks use SMEM proxy (tcgen05.alloc/ld/st requires SMEM descriptors) | Low | Resolved (proxy) |
-| 6 | `tcgen05_fp8` / `int8_tensor`: Scalar kernels (tcgen05.mma PTX requires descriptor-based layout) | Low | Resolved (scalar) |
+| 6 | `fp8_scalar` / `int8_scalar`: Scalar kernels (tcgen05.mma PTX requires descriptor-based layout) | Low | Resolved (scalar) |
 | 7 | `arm_sve2`: SVE2 intrinsics (`<arm_sve.h>`) unavailable → NEON fallback | Low | Resolved (fallback) |
+| 8 | `cublas_lt`: cuBLASLt API changed in CUDA 13.0 → stub | Low | Resolved (stub) |
+| 9 | `fp64_tensor`: WMMA FP64 guarded on `__CUDA_WmmaSupportDouble__` → stub when unavailable | Low | Resolved (stub) |
+| 10 | `int8_tensor`: `nvcuda::wmma` INT8 incomplete in CUDA 13.0 → stub | Low | Resolved (stub) |
+| 11 | `nvjpeg`: NVJPEG not available on Tegra → stub | Low | Resolved (stub) |
 
 ## T5000 Theoretical Peaks
 
 | Metric | Peak | Benchmark |
 |--------|------|-----------|
-| FP32 | 8.064 TFLOPS | sm_compute, mig |
+| FP32 | 8.064 TFLOPS | sm_compute, mig, cublas |
+| FP64 | 0.126 TFLOPS | sm_compute, fp64_tensor |
 | FP4 Dense | 1035 TFLOPS | fp4 |
 | FP4 Sparse | 2070 TFLOPS | fp4 |
-| FP8 Dense | 517 TFLOPS | sasp, tcgen05_fp8 |
-| FP8 Sparse | 1035 TFLOPS | sasp, tcgen05_fp8 |
+| FP8 Dense | 517 TFLOPS | sasp, fp8_scalar |
+| FP8 Sparse | 1035 TFLOPS | sasp, fp8_scalar |
+| INT8 (scalar fallback) | 8.064 TFLOPS | int8_scalar, int8_tensor |
 | LPDDR5X | 273 GB/s | memory, tegra_memory, tma_copy |
+| L2 Cache | 246 GB/s | l2_cache |
 | Shared Mem | 228 KB/SM | memory (shared crossbar) |
 | Registers | 65,536/SM | sm_compute (reg spill) |
 
 ## Suite Count
 
-**Total: 30 suites, 119 tests**
+**Total: 34 suites, 185 tests**
 
 | Category | Count |
 |----------|-------|
-| GPU Compute | 8 |
-| Memory | 7 |
+| GPU Compute | 11 |
+| Memory | 5 |
 | Sync | 5 |
-| Encode/Decode | 5 |
+| Encode/Decode | 6 |
 | CPU | 2 |
-| System | 3 |
+| System | 5 |

@@ -1,6 +1,7 @@
 #include "system/host_device_transfer.h"
 #include "bench_suites.h"
 #include "bench_stats.h"
+#include "bench_peaks.h"
 #include <cuda_runtime.h>
 #include <algorithm>
 #include <cmath>
@@ -75,6 +76,7 @@ std::vector<BenchResult> runHostDeviceTransferBench(int device, size_t transferS
             res.unit       = "GB/s";
             res.params_json = p.str();
             res.metadata["integrated"] = "true";
+            res.peak_pct = computePeakPctSame(res.median, T5000Peaks::memory_bandwidth_gbs);
             results.push_back(res);
         }
     }

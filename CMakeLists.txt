@@ -26,9 +26,11 @@ set(BENCH_CUDA_SRCS
     bench/suites/compute/sasp_bench.cu
     bench/suites/compute/fp4_bench.cu
     bench/suites/compute/tmem_bench.cu
-    bench/suites/compute/tcgen05_fp16_bench.cu
     bench/suites/compute/fp8_scalar_bench.cu
     bench/suites/compute/int8_scalar_bench.cu
+    bench/suites/compute/cublas_bench.cu
+    bench/suites/compute/fp64_tensor_bench.cu
+    bench/suites/compute/int8_tensor_bench.cu
     bench/suites/memory/tegra_memory.cu
     bench/suites/memory/unified_memory.cu
     bench/suites/memory/tma_copy.cu
@@ -42,6 +44,7 @@ set(BENCH_CUDA_SRCS
     bench/suites/sync/cluster_sync.cu
     bench/suites/sync/kernel_launch.cu
     bench/suites/sync/warp_primitives.cu
+    bench/suites/sync/atomic_bench.cu
 )
 
 set(BENCH_CUPTI_SRCS
@@ -54,6 +57,7 @@ set(BENCH_CPP_SRCS
     bench/suites/decode/h264_decode_bench.cpp
     bench/suites/decode/hevc_decode_bench.cpp
     bench/suites/decode/av1_decode_bench.cpp
+    bench/suites/encode/nvjpeg_bench.cpp
     bench/suites/cpu/arm_compute_bench.cpp
     bench/suites/cpu/arm_sve2_bench.cpp
     bench/suites/system/mig_bench.cpp

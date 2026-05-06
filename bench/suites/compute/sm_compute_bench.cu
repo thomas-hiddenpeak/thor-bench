@@ -274,6 +274,7 @@ BenchResult measureFP64(double* dA, double* dB, double* dC,
         };
         res.p95 = pct(0.95);
         res.p99 = pct(0.99);
+        res.peak_pct = computePeakPctFromG(res.median, T5000Peaks::fp64_tflops);
     }
 
     std::ostringstream p;

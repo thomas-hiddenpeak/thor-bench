@@ -2,6 +2,7 @@
 #include "bench_schema.h"
 #include "bench_suites.h"
 #include "bench_stats.h"
+#include "bench_peaks.h"
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
 #include <cuda_fp16.h>
@@ -68,12 +69,13 @@ BenchResult measureFP16(half* dA, half* dB, half* dC, int M, int N, int K,
     std::ostringstream p;
     p << "{\"M\":" << M << ",\"N\":" << N << ",\"K\":" << K
       << ",\"gx\":" << grid.x << ",\"gy\":" << grid.y << ",\"tpb\":" << tpb << "}";
-     BenchResult res = ::deusridet::bench::computeStats(vals, 3);
-     res.suite_name = "tensor";
-     res.test_name  = "fp16_mma";
-     res.unit       = "TFLOP/s";
-     res.params_json = p.str();
-     return res;
+    BenchResult res = ::deusridet::bench::computeStats(vals, 3);
+    res.suite_name = "tensor";
+    res.test_name  = "fp16_mma";
+    res.unit       = "TFLOP/s";
+    res.params_json = p.str();
+    res.peak_pct = computePeakPctFromT(res.median, T5000Peaks::fp32_tflops);
+    return res;
 }
 
 // ── Measure BF16 (via FP16 reinterpret) ────────────────────────────────────
@@ -108,7 +110,7 @@ BenchResult measureBF16(__nv_bfloat16* dA, __nv_bfloat16* dB, float* dC,
      res.params_json = p.str();
     res.metadata["approach"] = "bf16_data_reinterpreted_as_fp16_for_wmma";
     res.metadata["note"] = "nvcuda::wmma BF16 fragments incomplete in CUDA 13.0; throughput measured via fp16 WMMA path with bf16 memory layout";
-    res.peak_pct = std::nullopt; // BF16 peak not specified in T5000 datasheet
+    res.peak_pct = computePeakPctFromT(res.median, T5000Peaks::fp32_tflops);
     return res;
 }
 

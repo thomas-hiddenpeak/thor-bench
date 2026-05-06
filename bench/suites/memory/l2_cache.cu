@@ -100,7 +100,7 @@ BenchResult measureRead(const char* label, float* dSrc, float* dDst,
     res.suite_name = "l2_cache";
     res.test_name  = label;
     res.unit       = "GB/s";
-    res.peak_pct   = computePeakPctSame(res.median, T5000Peaks::memory_bandwidth_gbs);
+    res.peak_pct   = computePeakPctSame(res.median, T5000Peaks::l2_bandwidth_gbs);
 
     std::ostringstream p;
     p << "{\"bytes\":" << allocBytes
@@ -136,7 +136,7 @@ BenchResult measureStridedRead(float* dSrc, float* dDst,
     res.suite_name = "l2_cache";
     res.test_name  = "l2_strided_read";
     res.unit       = "GB/s";
-    res.peak_pct   = computePeakPctSame(res.median, T5000Peaks::memory_bandwidth_gbs);
+    res.peak_pct   = computePeakPctSame(res.median, T5000Peaks::l2_bandwidth_gbs);
 
     std::ostringstream p;
     p << "{\"bytes\":" << allocBytes
@@ -168,7 +168,7 @@ BenchResult measureRandomRead(float* dSrc, float* dDst,
     res.suite_name = "l2_cache";
     res.test_name  = "l2_random_read";
     res.unit       = "GB/s";
-    res.peak_pct   = computePeakPctSame(res.median, T5000Peaks::memory_bandwidth_gbs);
+    res.peak_pct   = computePeakPctSame(res.median, T5000Peaks::l2_bandwidth_gbs);
 
     std::ostringstream p;
     p << "{\"bytes\":" << allocBytes
@@ -199,7 +199,7 @@ BenchResult measureWrite(float* dDst,
     res.suite_name = "l2_cache";
     res.test_name  = "l2_write";
     res.unit       = "GB/s";
-    res.peak_pct   = computePeakPctSame(res.median, T5000Peaks::memory_bandwidth_gbs);
+    res.peak_pct   = computePeakPctSame(res.median, T5000Peaks::l2_bandwidth_gbs);
 
     std::ostringstream p;
     p << "{\"bytes\":" << allocBytes

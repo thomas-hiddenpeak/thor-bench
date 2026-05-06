@@ -131,6 +131,8 @@ static BenchResult makeResult(
     r.sample_count = n;
     r.warmup_count = kWarmupRounds;
     r.params_json  = R"({"note":"using NEON fallback, SVE2 intrinsics unavailable","neon_width":128,"data_len":1048576})";
+    r.metadata["neon_fallback"] = "true";
+    r.metadata["sve2_available"] = "false";
     return r;
 }
 
