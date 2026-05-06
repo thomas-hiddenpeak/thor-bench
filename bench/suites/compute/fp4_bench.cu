@@ -87,6 +87,18 @@ __device__ static uint64_t buildMdesc(const void* ptr, int leadingDim, int strid
     return desc;
 }
 
+// ── TMEM descriptor builder (64-bit) — same format as SmemDescriptor ───────
+__device__ static uint64_t buildTmemDesc(uint32_t baseOffset, uint32_t leadingBytes,
+                                          uint32_t strideBytes, int layoutType) {
+    uint64_t desc = 0;
+    desc  = (baseOffset >> 4) & 0x3FFF;
+    desc |= ((leadingBytes >> 4) & 0x3FFF) << 16;
+    desc |= ((strideBytes >> 4)  & 0x3FFF) << 32;
+    desc |= (1ULL) << 46;
+    desc |= (static_cast<uint64_t>(layoutType & 0x7)) << 61;
+    return desc;
+}
+
 // ── Instruction descriptor (32-bit) — InstrDescriptorBlockScaled format ──────
 // Source: CUTLASS mma_sm100_desc.hpp InstrDescriptorBlockScaled union
 // Bit  [7:10):    a_format_      (MXF4Format::E2M1 = 1)
@@ -96,22 +108,30 @@ __device__ static uint64_t buildMdesc(const void* ptr, int leadingDim, int strid
 // Bit  [17:23):   n_dim_         (N >> 3)
 // Bit  [23:24):   scale_format_  (0 = UE4M3, 1 = UE8M0)
 // Bit  [24:29):   m_dim_         (M >> 4)
-// Bit  [29:31):   a_sf_id_       (scale factor A ID, 0)
+// Bit  [29:31):   a_sf_id_       (from TMEM SFA address bits [31:29))
+// Bit  [4:6):     b_sf_id_       (from TMEM SFB address bits [31:29))
 // Bit  [31:32):   k_size_        (0 = K64 dense)
+//
+// CRITICAL: a_sf_id_ and b_sf_id_ MUST be derived from TMEM addresses of the
+// scale factor regions. The block_scale instruction reads scale factors from
+// TMEM using these IDs. Using shared memory addresses causes IllegalInstruction.
 __device__ static uint32_t buildIdesc(int M, int N,
-                                       int scaleFormat = 0,  // 0=UE4M3
-                                       int kSize = 0)        // 0=K64 dense
+                                        uint32_t tmemSfaAddr,
+                                        uint32_t tmemSfbAddr,
+                                        int scaleFormat = 0,  // 0=UE4M3
+                                        int kSize = 0)        // 0=K64 dense
 {
-    constexpr uint8_t E2M1 = 1;  // MXF4Format::E2M1 = 1 (NOT 5)
+    constexpr uint8_t E2M1 = 1;  // MXF4Format::E2M1 = 1
     uint32_t idesc = 0;
-    idesc  = E2M1;                              // a_format_ [7:10)
-    idesc |= (E2M1 << 10);                      // b_format_ [10:13)
+    idesc  = (E2M1 << 7);                         // a_format_ [7:10)
+    idesc |= (E2M1 << 10);                        // b_format_ [10:13)
     idesc |= (0 << 15);                         // a_major_ [15:16) row-major
     idesc |= (1 << 16);                         // b_major_ [16:17) col-major
     idesc |= ((N >> 3) & 0x3F) << 17;           // n_dim_ [17:23)
     idesc |= (scaleFormat & 1) << 23;            // scale_format_ [23:24) UE4M3=0
     idesc |= ((M >> 4) & 0x1F) << 24;            // m_dim_ [24:29)
-    idesc |= (0 << 29);                         // a_sf_id_ [29:31)
+    idesc |= ((tmemSfaAddr & 0xC0000000) >> 30) << 29;  // a_sf_id_ [29:31) from TMEM addr
+    idesc |= ((tmemSfbAddr & 0xC0000000) >> 30) << 4;   // b_sf_id_ [4:6) from TMEM addr
     idesc |= (kSize & 1) << 31;                  // k_size_ [31:32)
     return idesc;
 }
@@ -150,8 +170,8 @@ __global__ void fp4Nvf4GemmKernel(
     uint32_t* tmemHandlePtr        = reinterpret_cast<uint32_t*>(smem + 4096 + 256 + 512 + 32);
 
     // ── TMEM allocation ──────────────────────────────────────────────────
-    // nCols = WARP_N = 8 (FP32 columns per row)
-    uint32_t nCols = WARP_N;
+    // nCols = WARP_N + 128 (FP32 columns + space for scale factors)
+    uint32_t nCols = WARP_N + 128;
 
     uint32_t smemTmemPtr = static_cast<uint32_t>(__cvta_generic_to_shared(tmemHandlePtr));
     asm volatile(
@@ -159,8 +179,12 @@ __global__ void fp4Nvf4GemmKernel(
         : : "r"(smemTmemPtr), "r"(nCols) : "memory");
     asm volatile("tcgen05.relinquish_alloc_permit.cta_group::1.sync.aligned;" ::: "memory");
 
-    // Build idesc once
-    uint32_t idesc = buildIdesc(WARP_M, WARP_N);
+    // TMEM scale factor addresses (encode region IDs in bits [30:31))
+    uint32_t sfA_addr = 0xC0000000;
+    uint32_t sfB_addr = 0xD0000000;
+
+    // Build idesc once (with sf_id extraction from TMEM addresses)
+    uint32_t idesc = buildIdesc(WARP_M, WARP_N, sfA_addr, sfB_addr);
 
     // ── K loop ───────────────────────────────────────────────────────────
     int kTiles = K / WARP_K;
@@ -214,14 +238,41 @@ __global__ void fp4Nvf4GemmKernel(
         // scaleB is FP8 (1B), col-major: (WARP_K/16) x WARP_N
         uint64_t sbDesc = buildMdesc(sScaleB, WARP_N, WARP_N, 1, 1);
 
+        // ── Copy scale factors from shared memory to TMEM ──────────────────
+        // CUTLASS UTCCP syntax: tcgen05.cp.cta_group::1.<size> [tmem_dst_addr], smem_src_desc
+        // dst_addr is 32-bit TMEM address ("r"), src_desc is 64-bit SMEM descriptor ("l")
+        // 4x256b = 4 lanes x 256 bits = 128 bytes per copy
+        // SFA: 512 bytes = 4 x 128 byte copies. SFB: 32 bytes fits in one 4x128b = 64 byte copy.
+        {
+            uint32_t sfA_tmem = 0;
+            uint32_t sfB_tmem = 128;
+            asm volatile(
+                "tcgen05.cp.cta_group::1.4x256b [%0], %1;\n\t"
+                "tcgen05.cp.cta_group::1.4x256b [%0 + 128], %2;\n\t"
+                "tcgen05.cp.cta_group::1.4x256b [%0 + 256], %3;\n\t"
+                "tcgen05.cp.cta_group::1.4x256b [%0 + 384], %4;\n\t"
+                "tcgen05.cp.cta_group::1.4x256b [%5], %6;\n\t"
+                :
+                : "r"(sfA_tmem),
+                  "l"(saDesc),
+                  "l"(buildMdesc(sScaleA + 128, WARP_K / FP4_SCALE_BLOCK, WARP_K / FP4_SCALE_BLOCK, 1, 0)),
+                  "l"(buildMdesc(sScaleA + 256, WARP_K / FP4_SCALE_BLOCK, WARP_K / FP4_SCALE_BLOCK, 1, 0)),
+                  "l"(buildMdesc(sScaleA + 384, WARP_K / FP4_SCALE_BLOCK, WARP_K / FP4_SCALE_BLOCK, 1, 0)),
+                  "r"(sfB_tmem),
+                  "l"(sbDesc)
+                : "memory"
+            );
+        }
+        asm volatile("tcgen05.fence::before_thread_sync;" ::: "memory");
+
         // ── tcgen05.mma.cta_group::1.kind::mxf4nvf4.block_scale.block16 ──────
         // CUDA 13+ syntax: block16 (replaces scale_vec::4X from CUDA <12.9)
         uint32_t enableInputD = (kt == 0) ? 0 : 1;
         uint32_t tmemHandle = tmemHandlePtr[0];
 
-        // Scale factor addresses (shared memory pointers for block_scale variant)
-        uint32_t saPtr = static_cast<uint32_t>(__cvta_generic_to_shared(sScaleA));
-        uint32_t sbPtr = static_cast<uint32_t>(__cvta_generic_to_shared(sScaleB));
+        // Scale factor addresses (TMEM addresses for block_scale variant)
+        // uint32_t saPtr = static_cast<uint32_t>(__cvta_generic_to_shared(sScaleA));
+        // uint32_t sbPtr = static_cast<uint32_t>(__cvta_generic_to_shared(sScaleB));
 
         asm volatile(
             "{.reg .pred p;\n\t"
@@ -233,8 +284,8 @@ __global__ void fp4Nvf4GemmKernel(
               "l"(aDesc),
               "l"(bDesc),
               "r"(idesc),
-              "r"(saPtr),
-              "r"(sbPtr),
+              "r"(sfA_addr),
+              "r"(sfB_addr),
               "r"(enableInputD)
             : "memory"
         );
@@ -568,16 +619,20 @@ __global__ void fp4Nvf4SparseGemmKernel(
     __nv_fp8_storage_t*   sScaleB  = reinterpret_cast<__nv_fp8_storage_t*>(smem + 2048 + 1024 + 256 + 512);
     uint32_t* tmemHandlePtr        = reinterpret_cast<uint32_t*>(smem + 2048 + 1024 + 256 + 512 + 32);
 
-    // ── TMEM allocation ──────────────────────────────────────────────────
-    uint32_t nCols = WARP_N;
+    // ── TMEM allocation (C accumulator + scale factor regions) ────────────
+    uint32_t nCols = WARP_N + 128;
     uint32_t smemTmemPtr = static_cast<uint32_t>(__cvta_generic_to_shared(tmemHandlePtr));
     asm volatile(
         "tcgen05.alloc.cta_group::1.sync.aligned.shared::cta.b32 [%0], %1;"
         : : "r"(smemTmemPtr), "r"(nCols) : "memory");
     asm volatile("tcgen05.relinquish_alloc_permit.cta_group::1.sync.aligned;" ::: "memory");
 
-    // Build idesc for sparse: sparse_id2=4 in bits 0-2
-    uint32_t idesc = buildIdesc(WARP_M, WARP_N) | 4;
+    // TMEM scale factor addresses (CUTLASS pattern: bits [30:31) encode region ID)
+    uint32_t sfA_addr = 0xC0000000;  // region ID 3
+    uint32_t sfB_addr = 0xD0000000;  // region ID 5
+
+    // Build idesc for sparse: sparse_id2=4 in bits 0-2, plus sf_id extraction
+    uint32_t idesc = buildIdesc(WARP_M, WARP_N, sfA_addr, sfB_addr) | 4;
 
     // ── K loop (sparse K = K/2, so half the iterations) ───────────────────
     int kTiles = K / WARP_K;
@@ -639,6 +694,29 @@ __global__ void fp4Nvf4SparseGemmKernel(
         uint64_t saDesc = buildMdesc(sScaleA, WARP_K / FP4_SCALE_BLOCK, WARP_K / FP4_SCALE_BLOCK, 1, 0);
         uint64_t sbDesc = buildMdesc(sScaleB, WARP_N, WARP_N, 1, 1);
 
+        // ── Copy scale factors from shared memory to TMEM (same as dense) ──
+        {
+            uint32_t sfA_tmem = 0;
+            uint32_t sfB_tmem = 128;
+            asm volatile(
+                "tcgen05.cp.cta_group::1.4x256b [%0], %1;\n\t"
+                "tcgen05.cp.cta_group::1.4x256b [%0 + 128], %2;\n\t"
+                "tcgen05.cp.cta_group::1.4x256b [%0 + 256], %3;\n\t"
+                "tcgen05.cp.cta_group::1.4x256b [%0 + 384], %4;\n\t"
+                "tcgen05.cp.cta_group::1.4x256b [%5], %6;\n\t"
+                :
+                : "r"(sfA_tmem),
+                  "l"(saDesc),
+                  "l"(buildMdesc(sScaleA + 128, WARP_K / FP4_SCALE_BLOCK, WARP_K / FP4_SCALE_BLOCK, 1, 0)),
+                  "l"(buildMdesc(sScaleA + 256, WARP_K / FP4_SCALE_BLOCK, WARP_K / FP4_SCALE_BLOCK, 1, 0)),
+                  "l"(buildMdesc(sScaleA + 384, WARP_K / FP4_SCALE_BLOCK, WARP_K / FP4_SCALE_BLOCK, 1, 0)),
+                  "r"(sfB_tmem),
+                  "l"(sbDesc)
+                : "memory"
+            );
+        }
+        asm volatile("tcgen05.fence::before_thread_sync;" ::: "memory");
+
         // ── tcgen05.mma.sp — sparse variant (CUDA 13+ syntax: block16) ──────
         // CUTLASS exact syntax:
         // tcgen05.mma.sp.cta_group::1.kind::mxf4nvf4.block_scale.block16
@@ -648,9 +726,7 @@ __global__ void fp4Nvf4SparseGemmKernel(
         uint32_t enableInputD = (kt == 0) ? 0 : 1;
         uint32_t tmemHandle = tmemHandlePtr[0];
 
-        uint32_t saPtr = static_cast<uint32_t>(__cvta_generic_to_shared(sScaleA));
-        uint32_t sbPtr = static_cast<uint32_t>(__cvta_generic_to_shared(sScaleB));
-        uint32_t ePtr  = static_cast<uint32_t>(__cvta_generic_to_shared(sE));
+        uint32_t ePtr = static_cast<uint32_t>(__cvta_generic_to_shared(sE));
 
         asm volatile(
             "{\n\t"
@@ -664,9 +740,9 @@ __global__ void fp4Nvf4SparseGemmKernel(
               "l"(aDesc),            // %1 — A descriptor (64-bit)
               "l"(bDesc),            // %2 — B descriptor (64-bit)
               "r"(idesc),            // %3 — instruction descriptor (sparse_id2=4)
-              "r"(ePtr),             // %4 — E-matrix shared memory pointer (TMEM)
-              "r"(saPtr),            // %5 — scaleA pointer
-              "r"(sbPtr),            // %6 — scaleB pointer
+              "r"(ePtr),             // %4 — E-matrix shared memory pointer
+              "r"(sfA_addr),         // %5 — scaleA TMEM address (region ID 3)
+              "r"(sfB_addr),         // %6 — scaleB TMEM address (region ID 5)
               "r"(enableInputD)      // %7 — predicate control
             : "memory"
         );

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(thor-bench VERSION 0.1.0 LANGUAGES CXX CUDA)
+project(thor-bench VERSION 0.1.0 LANGUAGES C CXX CUDA)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -9,6 +9,17 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # ── Dependencies ──────────────────────────────────────────────────────────
 find_package(CUDAToolkit REQUIRED)
 find_package(thor-probe REQUIRED)
+
+# Build clone3 workaround shared library
+add_library(clone3_workaround SHARED src/clone3_workaround.c)
+target_link_libraries(clone3_workaround PRIVATE dl)
+set_target_properties(clone3_workaround PROPERTIES
+    C_STANDARD 11
+    POSITION_INDEPENDENT_CODE ON
+)
+
+# Build seccomp clone3 wrapper
+add_executable(seccomp_clone3 src/seccomp_clone3.c)
 
 # ── Source files ──────────────────────────────────────────────────────────
 set(BENCH_SRCS

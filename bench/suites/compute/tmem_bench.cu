@@ -28,7 +28,7 @@ constexpr int WARP_N =   8;
 __device__ static uint32_t buildIdesc(int M, int N) {
     constexpr uint8_t E2M1 = 1;
     uint32_t idesc = 0;
-    idesc  = E2M1;
+    idesc  = (E2M1 << 7);
     idesc |= (E2M1 << 10);
     idesc |= (0 << 15);
     idesc |= (1 << 16);
