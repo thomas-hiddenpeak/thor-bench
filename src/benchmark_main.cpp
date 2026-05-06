@@ -315,17 +315,18 @@ int main(int argc, char* argv[]) {
             CuptiProfiler::instance().stopRange();
         }
 
-        // Drain any pending async errors from the previous suite.
+        // ALWAYS synchronize to drain any async errors from the previous suite.
         // NOTE: cudaErrorIllegalInstruction from tcgen05 stub suites is expected
         // on Thor DevKit (tcgen05 unsupported by current driver). Tolerate it.
-        cudaError_t pendingErr = cudaGetLastError();
-        if (pendingErr != cudaSuccess && pendingErr != cudaErrorIllegalInstruction) {
-            cudaError_t e = cudaDeviceSynchronize();
-            if (e != cudaSuccess && e != cudaErrorIllegalInstruction) {
-                std::cerr << "CUDA error on final_sync: " << cudaGetErrorString(e) << std::endl;
-                return 1;
-            }
+        // cudaGetLastError() only checks the last API call — async kernel errors
+        // (like IllegalInstruction) only surface on synchronize.
+        cudaError_t syncErr = cudaDeviceSynchronize();
+        if (syncErr != cudaSuccess && syncErr != cudaErrorIllegalInstruction) {
+            std::cerr << "CUDA error on final_sync: " << cudaGetErrorString(syncErr) << std::endl;
+            return 1;
         }
+        // Drain host-side error queue after sync.
+        cudaGetLastError();
 
         if (!args.json) std::cout << std::endl;
     }
