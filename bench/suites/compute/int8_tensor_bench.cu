@@ -30,6 +30,7 @@ BenchResult makeStub(const std::string& testName) {
     res.metadata["precision"] = "int8";
     res.metadata["stub"] = "true";
     res.metadata["stub_reason"] = "nvcuda::wmma INT8 fragments incomplete in CUDA 13.0; tcgen05.mma kind::i8 requires descriptor-based PTX + SMEM";
+    res.peak_pct = 0.0; // stub — no measurable result
     return res;
 }
 
@@ -66,6 +67,7 @@ BENCH_REGISTER_SUITE(int8_tensor, "INT8 Tensor Core throughput (tcgen05)",
             r.params_json = std::string("{\"error\":\"") + ex.what() + "\"}";
             r.metadata["stub"] = "true";
             r.metadata["stub_reason"] = std::string("runtime error: ") + ex.what();
+            r.peak_pct = 0.0;
             fallback.push_back(r);
             return fallback;
         }

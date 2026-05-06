@@ -125,6 +125,7 @@ BenchResult measureTMEMReadBW(int device, int iterations) {
     res.params_json = p.str();
     res.metadata["proxy"] = "true";
     res.metadata["note"] = "SMEM read as TMEM proxy; tcgen05.alloc/ld PTX requires descriptor setup";
+    res.peak_pct = 0.0; // SMEM proxy — no T5000 TMEM peak reference
 
     chk(cudaFree(dOut), "out");
     chk(cudaStreamDestroy(str), "ds");
@@ -181,6 +182,7 @@ BenchResult measureTMEMWriteBW(int device, int iterations) {
     res.params_json = p.str();
     res.metadata["proxy"] = "true";
     res.metadata["note"] = "SMEM write as TMEM proxy; tcgen05.st PTX requires TMEM allocation";
+    res.peak_pct = 0.0; // SMEM proxy — no T5000 TMEM peak reference
 
     chk(cudaFree(dOut), "out");
     chk(cudaStreamDestroy(str), "ds");
@@ -236,6 +238,7 @@ BenchResult measureTMEMCopyLatency(int device, int iterations) {
     res.params_json = p.str();
     res.metadata["proxy"] = "true";
     res.metadata["note"] = "Global→SMEM→Global latency as tcgen05.cp proxy";
+    res.peak_pct = 0.0; // SMEM proxy — no T5000 TMEM peak reference
 
     chk(cudaFree(dIn), "in");
     chk(cudaFree(dOut), "out");
@@ -298,6 +301,7 @@ BenchResult measureTMEMvsSMEM(int device, int iterations) {
     res.params_json = p.str();
     res.metadata["proxy"] = "true";
     res.metadata["note"] = "Large-tile SMEM vs small-tile SMEM as TMEM proxy comparison";
+    res.peak_pct = 0.0; // SMEM proxy — no T5000 TMEM peak reference
 
     chk(cudaFree(dOut), "out");
     chk(cudaStreamDestroy(str), "ds");
@@ -321,6 +325,7 @@ std::vector<BenchResult> runTMEMBench(int device, int matDim, int iterations) {
         r.suite_name = "tmem";
         r.test_name  = "tmem_read_bw";
         r.unit       = "GB/s";
+        r.peak_pct   = 0.0;
         std::string err = "{\"error\":\"";
         err += ex.what();
         err += "\"}";
@@ -336,6 +341,7 @@ std::vector<BenchResult> runTMEMBench(int device, int matDim, int iterations) {
         r.suite_name = "tmem";
         r.test_name  = "tmem_write_bw";
         r.unit       = "GB/s";
+        r.peak_pct   = 0.0;
         std::string err = "{\"error\":\"";
         err += ex.what();
         err += "\"}";
@@ -351,6 +357,7 @@ std::vector<BenchResult> runTMEMBench(int device, int matDim, int iterations) {
         r.suite_name = "tmem";
         r.test_name  = "tmem_cp_latency";
         r.unit       = "ns";
+        r.peak_pct   = 0.0;
         std::string err = "{\"error\":\"";
         err += ex.what();
         err += "\"}";
@@ -366,6 +373,7 @@ std::vector<BenchResult> runTMEMBench(int device, int matDim, int iterations) {
         r.suite_name = "tmem";
         r.test_name  = "tmem_vs_smem";
         r.unit       = "GB/s";
+        r.peak_pct   = 0.0;
         std::string err = "{\"error\":\"";
         err += ex.what();
         err += "\"}";

@@ -63,6 +63,7 @@ Last updated: 2026-05-06
 | `hevc_encode` — 1080p | — |
 | `hevc_decode` — 1080p | — |
 | `av1_decode` — 1080p | — |
+| `nvjpeg` — encode/decode | — (stub, not on Tegra) |
 
 ### CPU
 | Suite | Result |
@@ -128,6 +129,7 @@ Last updated: 2026-05-06
 | `hevc_encode` | ✅ Done | NVENC HEVC 1920×1080 |
 | `hevc_decode` | ✅ Done | NVDEC HEVC 1920×1080 |
 | `av1_decode` | ✅ Done | NVDEC AV1 1920×1080 |
+| `nvjpeg` | ⚠️ Stub | NVJPEG not available on Tegra → stub |
 | `arm_compute` | ✅ Done | ARM FP32 NEON/SVE, 4 threads |
 | `arm_sve2` | ✅ Done | NEON fallback (SVE2 intrinsics unavailable), FP32/FP16/INT8 |
 
@@ -136,6 +138,7 @@ Last updated: 2026-05-06
 |-------|--------|-------|
 | `allocator_latency` | ✅ Done | cudaMalloc/Free latency + concurrent alloc throughput |
 | `mig` | ✅ Partial | Full GPU FP32 GEMM (5.65 TFLOPS, 70.1% peak); MIG partition stub (DevKit) |
+| `tmem` | ⚠️ Proxy | TMEM benchmarks use SMEM proxy (tcgen05.alloc/ld/st requires SMEM descriptors) |
 
 ### Infrastructure ✅
 | Feature | Status | Notes |

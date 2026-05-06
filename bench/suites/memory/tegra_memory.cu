@@ -535,7 +535,7 @@ std::vector<BenchResult> runTegraMemoryBench(int device, size_t transferSize, in
 
 #include "bench_suites.h"
 
-BENCH_REGISTER_SUITE(tegra_memory, "Tegra SoC memory architecture benchmark (Device/Pinned/Registered)",
+BENCH_REGISTER_SUITE(tegra_memory, "Tegra SoC memory architecture benchmark (Device/Pinned/Registered/Pageable)",
     [](deusridet::bench::BenchRunner&) -> std::vector<deusridet::bench::BenchResult> {
         return deusridet::bench::runTegraMemoryBench(0, 256*1024*1024, 10);
     });

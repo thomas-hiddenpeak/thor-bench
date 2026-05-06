@@ -53,7 +53,7 @@ All suites report `peak_pct` — percentage of T5000 theoretical maximum. See [A
 | `unified_memory` | Managed memory bandwidth | GB/s (read/write via `cudaMemPrefetchAsync()`) | ✅ |
 | `l2_cache` | L2 cache hit/miss bandwidth | GB/s (hit/miss) | ✅ |
 | `shared_carveout` | L1/shared memory carveout ratio | GB/s (carveout 0–100) | ✅ |
-| `fp4` | NVFP4 dense/sparse GEMM | TFLOP/s (via cublasLt) | ✅ |
+| `fp4` | NVFP4 dense/sparse GEMM | TFLOP/s (via tcgen05.mma inline PTX) | ✅ |
 | `fp8_scalar` | Scalar FP8 GEMM (no Tensor Core) | TFLOP/s | ⚠️ Scalar fallback; sparse stub |
 | `int8_scalar` | Scalar INT8 GEMM (no Tensor Core) | TOP/s | ⚠️ Scalar fallback; sparse stub |
 | `tmem` | TCGen05 TMEM bandwidth | GB/s | ⚠️ SMEM proxy (tcgen05 ld/st requires SMEM descriptors) |

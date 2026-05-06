@@ -33,9 +33,11 @@ Requires `thor-probe` installed (via `find_package(thor-probe)`).
 ```bash
 ./build/thor_bench                    # run all suites, text output
 ./build/thor_bench --json             # JSON output
-./build/thor_bench --suites memory,compute  # run specific suites
+./build/thor_bench --suites memory,tensor    # run specific suites
 ./build/thor_bench --iterations 20    # more samples
-./build/thor_bench 1                  # target CUDA device 1
+./build/thor_bench --warmup 5         # warmup runs per test
+./build/thor_bench --timeout 60       # per-suite timeout (seconds)
+./build/thor_bench --device 1         # target CUDA device 1
 ```
 
 ## Development Plan
@@ -69,7 +71,7 @@ bench/suites/
 │   ├── sm_compute_bench.{cu,h}       # FP32 FMA + register spill sweep
 │   ├── tensor_bench.{cu,h}           # FP16/BF16 WMMA
 │   ├── sasp_bench.{cu,h}             # FP8 dense + 2:4 sparse matmul
-│   ├── fp4_bench.{cu,h}              # NVFP4 dense/sparse GEMM via cublasLt
+│   ├── fp4_bench.{cu,h}              # NVFP4 dense/sparse GEMM via tcgen05.mma inline PTX
 │   ├── tmem_bench.{cu,h}             # TCGen05 TMEM bandwidth (SMEM proxy)
 │   ├── fp8_scalar_bench.{cu,h}       # Scalar FP8 GEMM (no Tensor Core)
 │   ├── int8_scalar_bench.{cu,h}      # Scalar INT8 GEMM (no Tensor Core)
