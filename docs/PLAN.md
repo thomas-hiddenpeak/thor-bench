@@ -193,3 +193,70 @@ Last updated: 2026-05-06
 | Encode/Decode | 6 |
 | CPU | 2 |
 | System | 5 |
+
+---
+
+## Phase 4 — Improvement Plan (Pending)
+
+This section catalogs all remaining stubs/partials and proposes actionable improvement paths. Items are categorized by feasibility.
+
+### Category A — CUDA 13.0 API Gaps (Driver/Toolchain-Blocked)
+
+These require either a newer CUDA version on Tegra, updated driver/firmware, or inline PTX workarounds.
+
+| # | Suite | Current State | Root Cause | Improvement Path | Est. Effort |
+|---|-------|--------------|------------|-----------------|-------------|
+| A1 | `fp64_tensor` | Stub (`__CUDA_WmmaSupportDouble__` guard) | CUDA 13.0 header does not define `__CUDA_WmmaSupportDouble__`; no `nvcuda::wmma::fragment` for FP64 | Implement inline PTX `tcgen05.mma.async` for FP64 (same pattern as FP4/FP8). Need `wgmma.mma_async.z` descriptor setup + `wgmma.sync`. Benchmark: 128×128×128 tile. Peak reference: 0.126 TFLOPS. | Medium |
+| A2 | `int8_tensor` | Dense: tcgen05 inline PTX (driver/firmware wall); Sparse: stub | `kind::i8` not supported by current Tegra driver/firmware. CUDA 13.0 `nvcuda::wmma` lacks INT8 fragment types. | Monitor CUDA 13.1+ Tegra driver updates. Fallback: emit `wgmma.mma_async.b16` with INT8→BF16 cast. Requires validation that `kind::i8` PTX is accepted by PTXAS but rejected at runtime vs. PTXAS rejection. | High (driver-dependent) |
+| A3 | `cublas` — cuBLASLt | Stub | `cublasLtMatmul` signatures changed significantly in CUDA 13.0; Tegra `libcublasLt.so` availability uncertain | Verify `libcublasLt.so` exists on Tegra. If available, update to CUDA 13.0 `cublasLtMatmulAlgSearch_t` + `cublasLtMatrixLayout_t` API. If unavailable, keep stub with clear "not on Tegra" marker. | Low (verification) |
+
+### Category B — Sparse Tensor Support (API-Blocked)
+
+All sparse stubs share the same root cause: 2:4 structured sparsity requires `tcgen05.mma.sp` with sparsity metadata descriptors, which are not yet supported.
+
+| # | Suite | Current State | Root Cause | Improvement Path | Est. Effort |
+|---|-------|--------------|------------|-----------------|-------------|
+| B1 | `sasp` — FP8 sparse | Stub | `cuSPARSELt` only supports INT8X4, not FP8 E4M3 | Two options: (1) Wait for cuSPARSELt FP8 support; (2) Implement manual 2:4 sparsity encoding + `tcgen05.mma.sp` inline PTX with sparsity descriptor. Option 2 is high-risk without NVIDIA guidance. | High |
+| B2 | `fp8_scalar` — sparse | Stub | `tcgen05.mma.sp` requires sparsity metadata + descriptor-based layout | Same root cause as B1. Requires NVIDIA-provided sparsity encoding example. | High |
+| B3 | `int8_scalar` — sparse | Stub | Same as B1/B2 | Same root cause. INT8X4 is supported by cuSPARSELt — try `cuSPARSELt` path instead of inline PTX. | Medium |
+
+### Category C — Tegra Platform Constraints (Unresolvable on DevKit)
+
+These are hardware/platform limitations. Stubs are appropriate and permanent on DevKit.
+
+| # | Suite | Current State | Root Cause | Verdict |
+|---|-------|--------------|------------|---------|
+| C1 | `nvjpeg` | Stub | NVJPEG library not shipped on Tegra Jetson | **Permanent stub.** Consider replacing with custom CUDA JPEG kernel (libjpeg-turbo GPU port) or marking suite as "not applicable." |
+| C2 | `mig` — MIG partitioning | Stub | DevKit does not support MIG; requires `nvidia-smi mig` setup | **Permanent stub on DevKit.** Works on production Thor modules with MIG-enabled firmware. |
+| C3 | `tma_copy` | Fallback (cudaMalloc + cudaHostAlloc) | `cudaMemPoolCreate` unsupported on Tegra | **Permanent fallback.** TMA requires memory pools which are not supported. Current fallback measures effective bandwidth. |
+| C4 | `tmem` | SMEM proxy | `tcgen05.alloc` / `tcgen05.ld` / `tcgen05.st` require SMEM descriptors | **Permanent proxy.** TMEM is internal to the Tensor Core and not directly accessible. SMEM proxy is the best available measurement. |
+
+### Category D — Toolchain / Naming Issues (Low-Effort Fixes)
+
+| # | Suite | Current State | Issue | Improvement Path | Est. Effort |
+|---|-------|--------------|-------|-----------------|-------------|
+| D1 | `arm_sve2` | NEON fallback | SVE2 intrinsics (`<arm_sve.h>`) unavailable; name is misleading | (1) Rename to `arm_neon` or `arm_cpu_vector`. (2) Add `#ifdef` for SVE2 when toolchain supports it. (3) Update README status to clarify NEON fallback. | Low |
+| D2 | `cluster_sync` | ✅ (README says "cluster_barrier stub") | README line 64 says "cluster_barrier stub" but actual code implements working cluster_barrier with `__cluster_dims__(2,1,1)` annotation. PLAN.md shows 0.55ns result. | Fix README line 64: `"✅ (cluster_barrier stub)"` → `"✅ __syncthreads + cluster_barrier"`. | Trivial |
+| D3 | `fp4` — sparse | Working (480 TFLOPS, 23.2%) | Sparse result is only 23.2% peak (vs 57.5% dense). May indicate suboptimal sparsity encoding or tile size. | Investigate tile sizing (M/N/K), sparsity ratio, and occupancy. Try larger matrices (m4096+). | Medium |
+
+### Category E — Missing Metrics & Coverage Gaps
+
+| # | Suite | Gap | Improvement Path | Est. Effort |
+|---|-------|-----|-----------------|-------------|
+| E1 | `fp8_scalar` | 0.04% peak — extremely low | Scalar FP8 GEMM is expected to be slow (no Tensor Core). Add context: compare against FP32 scalar baseline. Consider adding `peak_pct` reference vs FP32 scalar (not Tensor Core peak). | Low |
+| E2 | `sm_compute` — FP64 | 123 GFLOPS, no `% Peak` | FP64 peak reference (0.126 TFLOPS = 126 GFLOPS) exists in PLAN.md but not computed. Add `peak_pct` calculation. | Low |
+| E3 | `sm_compute` — RegPressure | 4492 GFLOPS > FP32 peak (8.064 TFLOPS) | 4492 GFLOPS is listed without `% Peak`. 4492/8064 = 55.8% — this is fine, just needs `peak_pct` added. | Low |
+| E4 | `hevc_encode` / `hevc_decode` / `av1_decode` | PLAN.md shows `—` (no results) | Verify these suites produce results on live hardware. May need test bitstream files or higher resolution inputs. | Low (verification) |
+| E5 | `atomic` — All ops | PLAN.md shows `—` (no results) | Verify atomic benchmark produces results. May need synchronization fix or larger workload. | Low (verification) |
+| E6 | `thermal_throttle` | PLAN.md shows `—` (no result) | 60s sustained run may need tegrastats output. Verify suite completes without timeout. | Low (verification) |
+| E7 | `multi_stream` | PLAN.md shows `—` (no result) | Verify multi-stream benchmark produces results on live hardware. | Low (verification) |
+
+### Priority Recommendations
+
+| Priority | Items | Rationale |
+|----------|-------|-----------|
+| **P0 — Trivial fixes** | D2 (README cluster_sync), E2/E3 (add `peak_pct`) | One-line changes, high documentation value |
+| **P1 — Low effort** | D1 (rename `arm_sve2`), A3 (verify cuBLASLt), E1 (FP8 scalar context) | <1 day each |
+| **P2 — Medium effort** | A1 (FP64 inline PTX), B3 (INT8 sparse via cuSPARSELt), D3 (FP4 sparse tuning) | 1-3 days each |
+| **P3 — Driver-dependent** | A2 (INT8 Tensor Core), B1/B2 (FP8 sparse) | Blocked until NVIDIA updates driver/firmware |
+| **P4 — Permanent** | C1-C4 | Platform constraints, stubs are appropriate |
