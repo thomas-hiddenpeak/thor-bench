@@ -7,10 +7,16 @@
 #include <cmath>
 #include <limits>
 #include <vector>
+#include <stdexcept>
 
 namespace deusridet::bench {
 
 namespace {
+
+inline void chk(cudaError_t e, const char* m) {
+    if (e != cudaSuccess)
+        throw std::runtime_error(std::string("CUDA(") + m + "): " + cudaGetErrorString(e));
+}
 
 bool probeNvencHevc(int dev) {
     cudaDeviceProp prop{};
@@ -24,26 +30,26 @@ double encodePass(int dev, int w, int h) {
     size_t frameBytes = static_cast<size_t>(w) * h * 3ULL / 2ULL;
 
     unsigned char *dIn = nullptr, *dOut = nullptr;
-    cudaMalloc(&dIn, frameBytes);
-    cudaMalloc(&dOut, frameBytes);
-    cudaMemset(dIn, 0x80, frameBytes);
+    chk(cudaMalloc(&dIn, frameBytes), "hevc_alloc_in");
+    chk(cudaMalloc(&dOut, frameBytes), "hevc_alloc_out");
+    chk(cudaMemset(dIn, 0x80, frameBytes), "hevc_memset");
 
     cudaEvent_t start, stop;
-    cudaEventCreate(&start);
-    cudaEventCreate(&stop);
+    chk(cudaEventCreate(&start), "hevc_ev_create_start");
+    chk(cudaEventCreate(&stop), "hevc_ev_create_stop");
 
-    cudaEventRecord(start);
-    cudaMemcpy(dOut, dIn, frameBytes, cudaMemcpyDefault);
-    cudaEventRecord(stop);
-    cudaEventSynchronize(stop);
+    chk(cudaEventRecord(start), "hevc_ev_record_start");
+    chk(cudaMemcpy(dOut, dIn, frameBytes, cudaMemcpyDefault), "hevc_memcpy");
+    chk(cudaEventRecord(stop), "hevc_ev_record_stop");
+    chk(cudaEventSynchronize(stop), "hevc_ev_sync");
 
-    cudaFree(dIn);
-    cudaFree(dOut);
+    chk(cudaFree(dIn), "hevc_free_in");
+    chk(cudaFree(dOut), "hevc_free_out");
 
     float milliseconds = 0.0f;
     cudaEventElapsedTime(&milliseconds, start, stop);
-    cudaEventDestroy(start);
-    cudaEventDestroy(stop);
+    chk(cudaEventDestroy(start), "hevc_ev_destroy_start");
+    chk(cudaEventDestroy(stop), "hevc_ev_destroy_stop");
 
     double sec = milliseconds / 1000.0;
     if (sec <= 0.0)

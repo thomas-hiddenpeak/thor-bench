@@ -92,17 +92,17 @@ static bool tmemSupported(int device) {
     cudaError_t e = cudaStreamSynchronize(str);
 
     if (e != cudaSuccess) {
-        cudaStreamDestroy(str);
+        chk(cudaStreamDestroy(str), "probe_stream_destroy");
         return false;
     }
 
     e = cudaGetLastError();
     if (e != cudaSuccess) {
-        cudaStreamDestroy(str);
+        chk(cudaStreamDestroy(str), "probe_stream_destroy");
         return false;
     }
 
-    cudaStreamDestroy(str);
+    chk(cudaStreamDestroy(str), "probe_stream_destroy");
 
     return true;
 }

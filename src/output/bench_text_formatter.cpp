@@ -64,7 +64,7 @@ std::string formatText(const BenchReport& report) {
         }
 
         // ── suite header ──
-        static std::string last_suite;
+        std::string last_suite;
         if (ptr->suite_name != last_suite) {
             last_suite = ptr->suite_name;
             os << BOLD << CYAN << "  " << ptr->suite_name << RESET << "\n";

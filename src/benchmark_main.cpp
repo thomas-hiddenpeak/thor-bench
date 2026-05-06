@@ -318,7 +318,7 @@ int main(int argc, char* argv[]) {
         // Drain any pending async errors from the previous suite
         cudaError_t pendingErr = cudaGetLastError();
         if (pendingErr != cudaSuccess) {
-            cudaDeviceSynchronize();
+            chk(cudaDeviceSynchronize(), "final_sync");
         }
 
         if (!args.json) std::cout << std::endl;

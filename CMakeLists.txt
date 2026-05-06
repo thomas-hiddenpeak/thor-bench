@@ -115,8 +115,10 @@ target_link_libraries(thor_bench PRIVATE
     CUDA::cuda_driver
     CUDA::cublasLt
     CUDA::cublas
-    ${NVJPEG_LIB}
 )
+if(NVJPEG_LIB)
+    target_link_libraries(thor_bench PRIVATE ${NVJPEG_LIB})
+endif()
 
 set_target_properties(thor_bench PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"

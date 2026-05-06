@@ -20,15 +20,14 @@ std::vector<BenchSuite>& BenchSuiteRegistry::allSuites() {
 
 std::vector<BenchSuite>& BenchSuiteRegistry::filteredSuites(const std::vector<std::string>& names) {
     if (names.empty()) return allSuites();
-    // Copy all suites first, then filter in-place to avoid clearing
-    // the reference that allSuites() returned.
+    std::vector<BenchSuite> filtered;
     std::vector<BenchSuite> all = allSuites();
-    suites_.clear();
     for (const auto& s : all) {
         if (std::find(names.begin(), names.end(), s.name) != names.end()) {
-            suites_.push_back(s);
+            filtered.push_back(s);
         }
     }
+    suites_ = std::move(filtered);
     return suites_;
 }
 

@@ -1,6 +1,6 @@
 #include "bench_runner.h"
+#include <cuda_runtime.h>
 #include <stdexcept>
-#include <limits>
 
 namespace deusridet::bench {
 
@@ -74,6 +74,11 @@ BenchResult BenchRunner::run(
         auto t0 = std::chrono::steady_clock::now();
         try {
             fn();
+            cudaError_t err = cudaGetLastError();
+            if (err != cudaSuccess) {
+                throw std::runtime_error(std::string("CUDA kernel error: ") +
+                                         cudaGetErrorString(err));
+            }
         } catch (const std::exception& e) {
             result.params_json = std::string{"{\"error\":\""} + e.what() + "\"}";
             fill(values, result);
@@ -103,7 +108,7 @@ BenchResult BenchRunner::runThroughput(
     auto valueExtractor = [workPerCall](std::chrono::nanoseconds duration) -> double {
         double seconds = duration.count() / 1e9;
         if (seconds <= 0.0)
-            return std::numeric_limits<double>::max();
+            return -1.0; // zero-duration sentinel (was DBL_MAX)
         return workPerCall / seconds;
     };
 

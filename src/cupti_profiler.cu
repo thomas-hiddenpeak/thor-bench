@@ -142,16 +142,9 @@ static void CUPTIAPI cuptiBufferComplete(CUcontext context,
 
         profiler->pushActivityRecord(std::move(act));
 
-        // Advance: cuptiActivityGetNextRecord returns next pointer on success
-        recordPtr = reinterpret_cast<uint8_t*>(record);
-        // We need the record size — advance by scanning to end of buffer or use
-        // the known struct sizes. CUPTI v1 records don't have a size field on
-        // the base struct. Use cuptiActivityGetNextRecord's record pointer for
-        // the next iteration (it advances internally).
-        // Actually, cuptiActivityGetNextRecord advances recordPtr on the next call.
-        // We need to get the size from somewhere. Let's just break after one record
-        // per call to be safe — CUPTI will call us again for more.
-        break;
+        // cuptiActivityGetNextRecord advances its internal pointer on success.
+        // Reset remaining to allow the next call; API stops on CUPTI_INVALID_ARGUMENT.
+        remaining = validSize;
     }
 }
 
@@ -267,7 +260,8 @@ CuptiOverhead CuptiProfiler::measureOverhead() {
 
     // Warmup launch
     cuptiOverheadKernel<<<blocks, threads>>>(dData, n);
-    cudaDeviceSynchronize();
+    chk(cudaGetLastError(), "warmup_kernel");
+    chk(cudaDeviceSynchronize(), "warmup_sync");
 
     // Activity kinds to toggle
     constexpr CUpti_ActivityKind kinds[] = {
@@ -290,7 +284,7 @@ CuptiOverhead CuptiProfiler::measureOverhead() {
 
     // Measure baseline (activities disabled)
     disableAll();
-    cuptiActivityFlushAll(0);
+    chk(cuptiActivityFlushAll(0), "flush_baseline");
 
     constexpr int samples = 5;
     std::vector<double> baseline;
@@ -298,7 +292,8 @@ CuptiOverhead CuptiProfiler::measureOverhead() {
     for (int i = 0; i < samples; ++i) {
         auto t0 = std::chrono::steady_clock::now();
         cuptiOverheadKernel<<<blocks, threads>>>(dData, n);
-        cudaDeviceSynchronize();
+        chk(cudaGetLastError(), "baseline_kernel");
+        chk(cudaDeviceSynchronize(), "baseline_sync");
         auto t1 = std::chrono::steady_clock::now();
         baseline.push_back(std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
     }
@@ -310,11 +305,12 @@ CuptiOverhead CuptiProfiler::measureOverhead() {
     for (int i = 0; i < samples; ++i) {
         auto t0 = std::chrono::steady_clock::now();
         cuptiOverheadKernel<<<blocks, threads>>>(dData, n);
-        cudaDeviceSynchronize();
+        chk(cudaGetLastError(), "instrumented_kernel");
+        chk(cudaDeviceSynchronize(), "instrumented_sync");
         auto t1 = std::chrono::steady_clock::now();
         instrumented.push_back(std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
     }
-    cuptiActivityFlushAll(0);
+    chk(cuptiActivityFlushAll(0), "flush_instrumented");
 
     std::sort(baseline.begin(), baseline.end());
     std::sort(instrumented.begin(), instrumented.end());
