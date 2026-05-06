@@ -104,6 +104,8 @@ make
 ./build/thor_bench --warmup 5                # warmup runs per test
 ./build/thor_bench --timeout 60              # per-suite timeout (seconds)
 ./build/thor_bench --device 1                # target CUDA device
+./build/thor_bench --cupti                   # enable CUPTI activity profiling
+./build/thor_bench --help                    # show help
 ```
 
 ## License
