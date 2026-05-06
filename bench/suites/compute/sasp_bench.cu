@@ -183,7 +183,7 @@ BenchResult measureFP8Dense(int device, int matDim, int iterations) {
 BenchResult measureFP8Sparse(int device, int matDim, int iterations) {
     // cuSPARSELt does NOT support FP8 structured sparsity (only INT8 via INT8X4).
     // FP8 2:4 sparse requires tcgen05.mma.sp inline PTX which is a separate benchmark
-    // (tcgen05_fp8 suite). cuSPARSELt's structuredDescriptorInit + matmulDescriptorInit
+    // (fp8_scalar suite). cuSPARSELt's structuredDescriptorInit + matmulDescriptorInit
     // fails with "operation not supported" for CUDA_R_8F_E4M3 sparse inputs.
     BenchResult res{};
     res.suite_name = "sasp";

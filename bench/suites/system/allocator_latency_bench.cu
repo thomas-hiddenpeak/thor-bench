@@ -82,7 +82,7 @@ std::vector<BenchResult> benchMallocLatency(int device, int iterations) {
         BenchResult res = computeStats(latencies, NUM_SIZES);
         res.suite_name = "allocator_latency";
         res.test_name  = "cuda_malloc_latency";
-        res.unit       = "us";
+        res.unit       = "µs";
 
         std::ostringstream p;
         p << "{\"sizes_b\":[4096,65536,1048576,4194304,16777216,67108864],"
@@ -150,7 +150,7 @@ std::vector<BenchResult> benchFreeLatency(int device, int iterations) {
         BenchResult res = computeStats(latencies, NUM_SIZES);
         res.suite_name = "allocator_latency";
         res.test_name  = "cuda_free_latency";
-        res.unit       = "us";
+        res.unit       = "µs";
 
         std::ostringstream p;
         p << "{\"sizes_b\":[4096,65536,1048576,4194304,16777216,67108864],"
@@ -268,7 +268,7 @@ std::vector<BenchResult> runAllocatorLatencyBench(int device, int iterations) {
         BenchResult r;
         r.suite_name = "allocator_latency";
         r.test_name  = "cuda_malloc_latency";
-        r.unit       = "us";
+        r.unit       = "µs";
         r.sample_count = 0;
         r.warmup_count = 0;
         std::string err = "{\"error\":\"";
@@ -285,7 +285,7 @@ std::vector<BenchResult> runAllocatorLatencyBench(int device, int iterations) {
         BenchResult r;
         r.suite_name = "allocator_latency";
         r.test_name  = "cuda_free_latency";
-        r.unit       = "us";
+        r.unit       = "µs";
         r.sample_count = 0;
         r.warmup_count = 0;
         std::string err = "{\"error\":\"";

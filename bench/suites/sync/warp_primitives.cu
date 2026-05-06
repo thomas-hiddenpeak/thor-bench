@@ -3,7 +3,6 @@
 #include "bench_stats.h"
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
-#include <device_functions.h>
 
 // __reduce_add_sync is SM80+ but not always exposed in CUDA 13.0 headers for device code.
 // We use __ballot_sync as the fourth warp primitive test instead.

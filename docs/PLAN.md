@@ -12,7 +12,7 @@ Last updated: 2026-05-06
 | `sm_compute` — RegPressure | 4492 GFLOPS | 55.8% |
 | `tensor` — FP16 WMMA | 402 TFLOPS | — |
 | `tensor` — BF16 WMMA | 400 TFLOPS | — |
-| `tcgen05_fp8` — FP8 dense (scalar) | 0.22 TFLOP/s | 0.04% |
+| `fp8_scalar` — FP8 dense (scalar) | 0.22 TFLOP/s | 0.04% |
 | `int8_scalar` — INT8 dense (scalar) | 0.22 TOP/s | — |
 | `fp4` — NVFP4 dense (m2048) | 595 TFLOPS | 57.5% |
 | `fp4` — NVFP4 sparse (m2048) | 480 TFLOPS | 23.2% |
