@@ -173,15 +173,21 @@ static bool fp8ScalarSparseSupported(int device) {
     int major = 0, minor = 0;
     chk(cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, device), "major");
     chk(cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, device), "minor");
-    if (major < 11 || (major == 11 && minor < 1)) return false;
+    if (major < 11) return false;
     cudaStream_t str;
     chk(cudaStreamCreate(&str), "probe_stream");
     fp8ScalarSparseProbeKernel<<<1, 32, 0, str>>>();
     cudaError_t e = cudaStreamSynchronize(str);
     chk(cudaStreamDestroy(str), "probe_stream_destroy");
-    if (e != cudaSuccess) return false;
+    if (e != cudaSuccess) {
+        cudaGetLastError(); // drain IllegalInstruction from probe
+        return false;
+    }
     e = cudaGetLastError();
-    if (e != cudaSuccess) return false;
+    if (e != cudaSuccess) {
+        cudaGetLastError(); // drain
+        return false;
+    }
     return true;
 }
 
