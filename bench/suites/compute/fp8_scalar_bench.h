@@ -5,6 +5,6 @@
 
 namespace deusridet::bench {
 
-std::vector<BenchResult> runTCGen05FP8Bench(int device, int matDim, int iterations);
+std::vector<BenchResult> runFP8ScalarBench(int device, int matDim, int iterations);
 
 }

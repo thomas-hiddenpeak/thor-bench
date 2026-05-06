@@ -27,8 +27,8 @@ set(BENCH_CUDA_SRCS
     bench/suites/compute/fp4_bench.cu
     bench/suites/compute/tmem_bench.cu
     bench/suites/compute/tcgen05_fp16_bench.cu
-    bench/suites/compute/tcgen05_fp8_bench.cu
-    bench/suites/compute/int8_tensor_bench.cu
+    bench/suites/compute/fp8_scalar_bench.cu
+    bench/suites/compute/int8_scalar_bench.cu
     bench/suites/memory/tegra_memory.cu
     bench/suites/memory/unified_memory.cu
     bench/suites/memory/tma_copy.cu

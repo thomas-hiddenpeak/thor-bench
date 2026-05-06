@@ -1,4 +1,4 @@
-#include "compute/tcgen05_fp8_bench.h"
+#include "compute/fp8_scalar_bench.h"
 #include "bench_schema.h"
 #include "bench_suites.h"
 #include "bench_peaks.h"
@@ -163,8 +163,8 @@ BenchResult measureFP8Dense(int device, int matDim, int iterations) {
       << ",\"tile\":" << kTile << ",\"format\":\"e4m3\""
       << ",\"type\":\"scalar_fp8_kernel\"}";
 
-    BenchResult res = computeStats(vals, "tcgen05_fp8", "tcgen05_fp8_dense",
-                                    "TFLOP/s", p.str(), T5000Peaks::fp8_dense_tflops);
+    BenchResult res = computeStats(vals, "fp8_scalar", "fp8_scalar_dense",
+                                     "TFLOP/s", p.str(), T5000Peaks::fp8_dense_tflops);
     res.metadata["peak_dense_tflops"] = std::to_string(static_cast<int>(T5000Peaks::fp8_dense_tflops));
     res.metadata["note"] = "scalar FP8 kernel; tcgen05.mma kind::f8f6f4 PTX requires SMEM descriptors + TMEM alloc";
 
@@ -186,8 +186,8 @@ BenchResult measureFP8Dense(int device, int matDim, int iterations) {
 BenchResult measureFP8Sparse(int device, int matDim, int iterations) {
     (void)device; (void)matDim; (void)iterations;
     BenchResult res{};
-    res.suite_name = "tcgen05_fp8";
-    res.test_name  = "tcgen05_fp8_sparse";
+    res.suite_name = "fp8_scalar";
+    res.test_name  = "fp8_scalar_sparse";
     res.unit       = "TFLOP/s";
     res.sample_count = 0;
     res.warmup_count = 0;
@@ -200,7 +200,7 @@ BenchResult measureFP8Sparse(int device, int matDim, int iterations) {
 
 } // anonymous namespace
 
-std::vector<BenchResult> runTCGen05FP8Bench(int device, int matDim, int iterations) {
+std::vector<BenchResult> runFP8ScalarBench(int device, int matDim, int iterations) {
     std::vector<BenchResult> results;
 
     // --- FP8 Dense ---
@@ -208,8 +208,8 @@ std::vector<BenchResult> runTCGen05FP8Bench(int device, int matDim, int iteratio
         results.push_back(measureFP8Dense(device, matDim, iterations));
     } catch (const std::exception& ex) {
         BenchResult r{};
-        r.suite_name = "tcgen05_fp8";
-        r.test_name  = "tcgen05_fp8_dense";
+        r.suite_name = "fp8_scalar";
+        r.test_name  = "fp8_scalar_dense";
         r.unit       = "TFLOP/s";
         std::string err = "{\"error\":\"";
         err += ex.what();
@@ -224,8 +224,8 @@ std::vector<BenchResult> runTCGen05FP8Bench(int device, int matDim, int iteratio
         results.push_back(measureFP8Sparse(device, matDim, iterations));
     } catch (const std::exception& ex) {
         BenchResult r{};
-        r.suite_name = "tcgen05_fp8";
-        r.test_name  = "tcgen05_fp8_sparse";
+        r.suite_name = "fp8_scalar";
+        r.test_name  = "fp8_scalar_sparse";
         r.unit       = "TFLOP/s";
         std::string err = "{\"error\":\"";
         err += ex.what();
@@ -240,7 +240,7 @@ std::vector<BenchResult> runTCGen05FP8Bench(int device, int matDim, int iteratio
 
 } // namespace deusridet::bench
 
-BENCH_REGISTER_SUITE(tcgen05_fp8, "TCGen05 FP8 block-scaled GEMM via tcgen05.mma (Tensor Core)",
+BENCH_REGISTER_SUITE(fp8_scalar, "Scalar FP8 GEMM (no Tensor Core — ~0.04% of peak)",
     [](deusridet::bench::BenchRunner& runner) -> std::vector<deusridet::bench::BenchResult> {
-        return deusridet::bench::runTCGen05FP8Bench(0, 512, 10);
+        return deusridet::bench::runFP8ScalarBench(0, 512, 10);
     });
