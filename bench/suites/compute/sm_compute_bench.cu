@@ -291,20 +291,7 @@ BenchResult measureFP64(double* dA, double* dB, double* dC,
 std::vector<BenchResult> runSMComputeBench(int device, int blockSizes[], int numBlocks, int iterations) {
     std::vector<BenchResult> results;
 
-    // Default block sizes if not provided
-    std::vector<int> bszs;
-    if (blockSizes && numBlocks > 0) {
-        for (int i = 0; i < numBlocks; ++i)
-            bszs.push_back(blockSizes[i]);
-    } else {
-        bszs = {128, 256, 512, 1024};
-    }
-
-    // Get device properties for peak GFLOP calculation
-    cudaDeviceProp prop;
-    chk(cudaGetDeviceProperties(&prop, device), "props");
-
-    // Note: prop.clockRate deprecated in newer CUDA; using limits instead
+    (void)blockSizes; (void)numBlocks; // block sizes unused; single config with kTpb=256
 
     chk(cudaSetDevice(device), "dev");
 
@@ -317,74 +304,71 @@ std::vector<BenchResult> runSMComputeBench(int device, int blockSizes[], int num
     size_t numElems = 1024ULL * 1024; // 1M elements
     int burns = 128; // burn cycles per thread
 
-    for (int bsz : bszs) {
-        (void)bsz; // block sizes unused; we use kTpb=256 for optimal occupancy
-        // Grid size: enough blocks for all elements AND enough for full GPU occupancy (20 SMs × 32 CTAs = 640).
-        int gridX = std::max(1, std::min(65535, static_cast<int>((numElems + kTpb - 1) / kTpb)));
+    // Grid size: enough blocks for all elements AND enough for full GPU occupancy (20 SMs × 32 CTAs = 640).
+    int gridX = std::max(1, std::min(65535, static_cast<int>((numElems + kTpb - 1) / kTpb)));
 
-        // Allocate for FP32
-        size_t szF32 = numElems * sizeof(float);
-        float *dA = nullptr, *dB = nullptr, *dC = nullptr;
-        chk(cudaMalloc(&dA, szF32), "a");
-        chk(cudaMalloc(&dB, szF32), "b");
-        chk(cudaMalloc(&dC, szF32), "c");
-        chk(cudaMemset(dA, 0x3F, szF32), "a");
-        chk(cudaMemset(dB, 0x3F, szF32), "b");
+    // Allocate for FP32
+    size_t szF32 = numElems * sizeof(float);
+    float *dA = nullptr, *dB = nullptr, *dC = nullptr;
+    chk(cudaMalloc(&dA, szF32), "a");
+    chk(cudaMalloc(&dB, szF32), "b");
+    chk(cudaMalloc(&dC, szF32), "c");
+    chk(cudaMemset(dA, 0x3F, szF32), "a");
+    chk(cudaMemset(dB, 0x3F, szF32), "b");
 
-        // Warmup
-        for (int w = 0; w < 3; ++w)
-            fp32FMAKernel<<<gridX, kTpb, 0, str>>>(dA, dB, dC, numElems, burns);
-        chk(cudaStreamSynchronize(str), "ws");
+    // Warmup FP32
+    for (int w = 0; w < 3; ++w)
+        fp32FMAKernel<<<gridX, kTpb, 0, str>>>(dA, dB, dC, numElems, burns);
+    chk(cudaStreamSynchronize(str), "ws");
 
-        // FP32 measure
-        try {
-            results.push_back(measureFP32(dA, dB, dC, numElems, gridX, burns, iterations, evS, evE, str));
-        } catch (const std::exception& ex) {
-            BenchResult r{};
-            r.suite_name = "sm_compute";
-            r.test_name  = "fp32_fma";
-            r.unit       = "GFLOP/s";
-            std::string err = "{\"error\":\"";
-            err += ex.what();
-            err += "\",\"block_size\":" + std::to_string(kTpb) + "}";
-            r.params_json = err;
-            results.push_back(r);
-        }
-
-        // Allocate for FP64
-        size_t szF64 = numElems * sizeof(double);
-        double *dAd = nullptr, *dBd = nullptr, *dCd = nullptr;
-        chk(cudaMalloc(&dAd, szF64), "ad");
-        chk(cudaMalloc(&dBd, szF64), "bd");
-        chk(cudaMalloc(&dCd, szF64), "cd");
-
-        // Warmup FP64
-        for (int w = 0; w < 3; ++w)
-            fp64FMAKernel<<<gridX, kTpb, 0, str>>>(dAd, dBd, dCd, numElems, burns);
-        chk(cudaStreamSynchronize(str), "ws");
-
-        // FP64 measure
-        try {
-            results.push_back(measureFP64(dAd, dBd, dCd, numElems, gridX, burns, iterations, evS, evE, str));
-        } catch (const std::exception& ex) {
-            BenchResult r{};
-            r.suite_name = "sm_compute";
-            r.test_name  = "fp64_fma";
-            r.unit       = "GFLOP/s";
-            std::string err = "{\"error\":\"";
-            err += ex.what();
-            err += "\",\"block_size\":" + std::to_string(kTpb) + "}";
-            r.params_json = err;
-            results.push_back(r);
-        }
-
-        chk(cudaFree(dA), "fa");
-        chk(cudaFree(dB), "fb");
-        chk(cudaFree(dC), "fc");
-        chk(cudaFree(dAd), "fad");
-        chk(cudaFree(dBd), "fbd");
-        chk(cudaFree(dCd), "fcd");
+    // FP32 measure
+    try {
+        results.push_back(measureFP32(dA, dB, dC, numElems, gridX, burns, iterations, evS, evE, str));
+    } catch (const std::exception& ex) {
+        BenchResult r{};
+        r.suite_name = "sm_compute";
+        r.test_name  = "fp32_fma";
+        r.unit       = "GFLOP/s";
+        std::string err = "{\"error\":\"";
+        err += ex.what();
+        err += "\",\"block_size\":" + std::to_string(kTpb) + "}";
+        r.params_json = err;
+        results.push_back(r);
     }
+
+    // Allocate for FP64
+    size_t szF64 = numElems * sizeof(double);
+    double *dAd = nullptr, *dBd = nullptr, *dCd = nullptr;
+    chk(cudaMalloc(&dAd, szF64), "ad");
+    chk(cudaMalloc(&dBd, szF64), "bd");
+    chk(cudaMalloc(&dCd, szF64), "cd");
+
+    // Warmup FP64
+    for (int w = 0; w < 3; ++w)
+        fp64FMAKernel<<<gridX, kTpb, 0, str>>>(dAd, dBd, dCd, numElems, burns);
+    chk(cudaStreamSynchronize(str), "ws");
+
+    // FP64 measure
+    try {
+        results.push_back(measureFP64(dAd, dBd, dCd, numElems, gridX, burns, iterations, evS, evE, str));
+    } catch (const std::exception& ex) {
+        BenchResult r{};
+        r.suite_name = "sm_compute";
+        r.test_name  = "fp64_fma";
+        r.unit       = "GFLOP/s";
+        std::string err = "{\"error\":\"";
+        err += ex.what();
+        err += "\",\"block_size\":" + std::to_string(kTpb) + "}";
+        r.params_json = err;
+        results.push_back(r);
+    }
+
+    chk(cudaFree(dA), "fa");
+    chk(cudaFree(dB), "fb");
+    chk(cudaFree(dC), "fc");
+    chk(cudaFree(dAd), "fad");
+    chk(cudaFree(dBd), "fbd");
+    chk(cudaFree(dCd), "fcd");
 
     // --- Register spill / occupancy sweep ---
     {
@@ -435,6 +419,5 @@ std::vector<BenchResult> runSMComputeBench(int device, int blockSizes[], int num
 
 BENCH_REGISTER_SUITE(sm_compute, "SM FP32/FP64 compute throughput",
     ([](deusridet::bench::BenchRunner& runner) -> std::vector<deusridet::bench::BenchResult> {
-        int blockSizes[] = {128, 256, 512};
-        return deusridet::bench::runSMComputeBench(0, blockSizes, 3, 10);
+        return deusridet::bench::runSMComputeBench(0, nullptr, 0, 10);
     }));

@@ -72,8 +72,8 @@ bench/suites/
 │   ├── fp4_bench.{cu,h}              # NVFP4 dense/sparse GEMM via cublasLt
 │   ├── tmem_bench.{cu,h}             # TCGen05 TMEM bandwidth (SMEM proxy)
 │   ├── tcgen05_fp16_bench.{cu,h}     # TCGen05 FP16/BF16 GEMM
-│   ├── tcgen05_fp8_bench.{cu,h}      # TCGen05 FP8 GEMM (scalar fallback)
-│   └── int8_tensor_bench.{cu,h}      # INT8 tensor core throughput
+│   ├── fp8_scalar_bench.{cu,h}              # Scalar FP8 GEMM (no Tensor Core)
+│   └── int8_scalar_bench.{cu,h}      # Scalar INT8 GEMM (no Tensor Core)
 ├── memory/
 │   ├── tegra_memory.{cu,h}           # Device/Pinned/Registered/Pageable
 │   ├── tma_copy.{cu,h}               # TMA async copy via mempool
