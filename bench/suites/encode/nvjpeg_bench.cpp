@@ -13,7 +13,7 @@ BenchResult makeStub(const std::string& testName, const std::string& note) {
     BenchResult r;
     r.suite_name = "nvjpeg";
     r.test_name  = testName;
-    r.unit       = "images/s";
+    r.unit       = "fps";
     r.sample_count = 0;
     r.warmup_count = 0;
     r.median = 0.0;

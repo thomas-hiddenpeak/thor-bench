@@ -1,5 +1,4 @@
 #include "bench_text_formatter.h"
-#include "bench_schema.h"
 
 #include <string>
 #include <vector>

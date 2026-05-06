@@ -3,7 +3,6 @@
 #include "bench_suites.h"
 #include "bench_peaks.h"
 #include "bench_stats.h"
-#include "bench_stats.h"
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
 #include <algorithm>

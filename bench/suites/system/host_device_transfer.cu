@@ -104,6 +104,7 @@ std::vector<BenchResult> runHostDeviceTransferBench(int device, size_t transferS
             res.suite_name = "host_device_transfer";
             res.test_name  = "device_to_host";
             res.unit       = "GB/s";
+            res.peak_pct   = computePeakPctSame(res.median, T5000Peaks::memory_bandwidth_gbs);
             res.params_json = p.str();
             res.metadata["integrated"] = "true";
             results.push_back(res);

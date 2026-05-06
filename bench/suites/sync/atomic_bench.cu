@@ -1,10 +1,8 @@
 #include "sync/atomic_bench.h"
 #include "bench_schema.h"
 #include "bench_stats.h"
-#include "bench_peaks.h"
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
-#include <cuda_runtime.h>
 #include <algorithm>
 #include <cmath>
 #include <sstream>

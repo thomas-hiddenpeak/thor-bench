@@ -104,6 +104,7 @@ BenchResult measureINT8Dense(int device, int matDim, int iterations) {
     res.suite_name = "int8_scalar";
     res.test_name  = "int8_scalar_dense";
     res.unit       = "TOP/s";
+    res.peak_pct   = computePeakPctFromT(res.median, T5000Peaks::int8_top);
     res.params_json = p.str();
     res.metadata["note"] = "scalar INT8 kernel with int32 accumulate; tcgen05.mma kind::i8 PTX requires SMEM descriptors + TMEM alloc";
 

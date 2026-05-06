@@ -10,8 +10,6 @@
 
 #include <cuda_runtime.h>
 
-#include "bench_schema.h"
-#include "bench_runner.h"
 #include "bench_suites.h"
 #include "bench_json_serializer.h"
 #include "bench_text_formatter.h"

@@ -200,9 +200,9 @@ static BenchResult runI8Test(const std::string& test_name, double opsPerCall) {
         asm volatile("" : "+r"(sink) : : "memory");
         auto t1 = std::chrono::steady_clock::now();
         double secs = std::chrono::duration<double>(t1 - t0).count();
-        samples.push_back(opsPerCall * callsPerIter / (secs * 1e9));
+        samples.push_back(opsPerCall * callsPerIter / (secs * 1e12));
     }
-    return makeResult(test_name, samples, "GOP/s");
+    return makeResult(test_name, samples, "TOP/s");
 }
 
 }

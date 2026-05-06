@@ -74,7 +74,7 @@ BenchResult measureFP16(half* dA, half* dB, half* dC, int M, int N, int K,
     res.test_name  = "fp16_mma";
     res.unit       = "TFLOP/s";
     res.params_json = p.str();
-    res.peak_pct = computePeakPctFromT(res.median, T5000Peaks::fp32_tflops);
+    res.peak_pct = computePeakPctFromT(res.median, T5000Peaks::fp16_tflops);
     return res;
 }
 
@@ -110,7 +110,7 @@ BenchResult measureBF16(__nv_bfloat16* dA, __nv_bfloat16* dB, float* dC,
      res.params_json = p.str();
     res.metadata["approach"] = "bf16_data_reinterpreted_as_fp16_for_wmma";
     res.metadata["note"] = "nvcuda::wmma BF16 fragments incomplete in CUDA 13.0; throughput measured via fp16 WMMA path with bf16 memory layout";
-    res.peak_pct = computePeakPctFromT(res.median, T5000Peaks::fp32_tflops);
+    res.peak_pct = computePeakPctFromT(res.median, T5000Peaks::fp16_tflops);
     return res;
 }
 

@@ -40,7 +40,6 @@ private:
     std::chrono::milliseconds timeout_ = std::chrono::minutes(5);
     std::string unit_ = "ops/s";
 
-    std::vector<double> computeStats(std::vector<double> values);
     double percentile(std::vector<double>& values, double p);
     double median(std::vector<double>& values);
     double stddev(const std::vector<double>& values, double mean);

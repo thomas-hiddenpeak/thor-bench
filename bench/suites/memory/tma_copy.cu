@@ -3,7 +3,6 @@
 #include "bench_peaks.h"
 #include "bench_stats.h"
 #include <cuda_runtime.h>
-#include <cuda_runtime_api.h>
 #include <algorithm>
 #include <cmath>
 #include <sstream>

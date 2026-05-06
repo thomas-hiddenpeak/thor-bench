@@ -110,20 +110,6 @@ BenchResult BenchRunner::runThroughput(
     return run(suite_name, test_name, fn, valueExtractor);
 }
 
-std::vector<double> BenchRunner::computeStats(std::vector<double> values) {
-    if (values.empty())
-        return {};
-
-    std::sort(values.begin(), values.end());
-    int n = static_cast<int>(values.size());
-
-    double sum = std::accumulate(values.begin(), values.end(), 0.0);
-    double mean = sum / n;
-
-    return {mean, median(values), stddev(values, mean),
-            percentile(values, 0.95), percentile(values, 0.99)};
-}
-
 double BenchRunner::percentile(std::vector<double>& values, double p) {
     int n = static_cast<int>(values.size());
     if (n == 0)
