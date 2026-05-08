@@ -232,18 +232,11 @@ __global__ void int8ProbeKernel() {
 
 // ── Check if INT8 tcgen05.mma is supported ──────────────────────────────────
 static bool int8Supported(int device) {
-    chk(cudaSetDevice(device), "probe_dev");
-    int major = 0;
-    chk(cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, device), "major");
-    if (major < 11) return false;
-    try {
-        int8ProbeKernel<<<1, 1>>>();
-        cudaError_t e = cudaDeviceSynchronize();
-        if (e != cudaSuccess) return false;
-    } catch (...) {
-        return false;
-    }
-    return true;
+    // tcgen05.mma kind::i8 triggers IllegalInstruction on driver 595.58.03.
+    // CRITICAL: The IllegalInstruction poisons the CUDA device context permanently.
+    // cudaDeviceReset() does NOT recover on Tegra. One probe launch kills ALL subsequent suites.
+    // Do NOT replace this with a real probe kernel.
+    return false;
 }
 
 // ── Stub result builders ────────────────────────────────────────────────────

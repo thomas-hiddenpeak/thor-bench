@@ -91,19 +91,11 @@ __global__ void tmemProbeKernel() {
 }
 
 static bool tmemSupported(int device) {
-    chk(cudaSetDevice(device), "probe_dev");
-    int major = 0, minor = 0;
-    chk(cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, device), "major");
-    chk(cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, device), "minor");
-    if (major < 11) return false;
-    try {
-        tmemProbeKernel<<<1, 1>>>();
-        cudaError_t e = cudaDeviceSynchronize();
-        if (e != cudaSuccess) return false;
-    } catch (...) {
-        return false;
-    }
-    return true;
+    // tcgen05.mma.kind::mxf4nvf4.block_scale triggers IllegalInstruction on driver 595.58.03.
+    // CRITICAL: The IllegalInstruction poisons the CUDA device context permanently.
+    // cudaDeviceReset() does NOT recover on Tegra. One probe launch kills ALL subsequent suites.
+    // Do NOT replace this with a real probe kernel.
+    return false;
 }
 
 // ── TMEM Read Bandwidth kernel ──────────────────────────────────────────────

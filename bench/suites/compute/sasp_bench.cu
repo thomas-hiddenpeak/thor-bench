@@ -215,18 +215,11 @@ __global__ void fp8SparseProbeKernel() {
 }
 
 static bool fp8SparseSupported(int device) {
-    chk(cudaSetDevice(device), "probe_dev");
-    int major = 0;
-    chk(cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, device), "major");
-    if (major < 11) return false;
-    try {
-        fp8SparseProbeKernel<<<1, 1>>>();
-        cudaError_t e = cudaDeviceSynchronize();
-        if (e != cudaSuccess) return false;
-    } catch (...) {
-        return false;
-    }
-    return true;
+    // tcgen05.mma.sp.kind::f8f6f4 triggers IllegalInstruction on driver 595.58.03.
+    // CRITICAL: The IllegalInstruction poisons the CUDA device context permanently.
+    // cudaDeviceReset() does NOT recover on Tegra. One probe launch kills ALL subsequent suites.
+    // Do NOT replace this with a real probe kernel.
+    return false;
 }
 
 // Tile dimensions: 16x16x16 per warp (same as INT8 TC sparse kernel).
@@ -661,6 +654,11 @@ using deusridet::bench::SweepReport;
 using deusridet::bench::SweepResult;
 using deusridet::bench::PowerMonitor;
 using deusridet::bench::getSweepTimestamp;
+
+BENCH_REGISTER_SUITE(sasp, "FP8 dense matmul + 2:4 structured sparse (scalar kernel, no Tensor Core)",
+    [](deusridet::bench::BenchRunner& runner) -> std::vector<deusridet::bench::BenchResult> {
+        return deusridet::bench::runSASPBench(0, 256, 10);
+    });
 
 BENCH_REGISTER_SWEEP_SUITE(sasp, "FP8 dense matmul + 2:4 structured sparse (scalar kernel, no Tensor Core)",
     [](deusridet::bench::BenchRunner& runner, int device) -> std::vector<deusridet::bench::SweepReport> {
