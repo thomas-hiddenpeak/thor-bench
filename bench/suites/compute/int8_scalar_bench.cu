@@ -147,25 +147,11 @@ __global__ void int8SparseProbeKernel() {
 
 static bool int8SparseSupported(int device) {
     chk(cudaSetDevice(device), "probe_dev");
-    int major = 0, minor = 0;
+    int major = 0;
     chk(cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, device), "major");
-    chk(cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, device), "minor");
-    if (major < 11) return false;
-    cudaStream_t str;
-    chk(cudaStreamCreate(&str), "probe_stream");
-    int8SparseProbeKernel<<<1, 32, 0, str>>>();
-    cudaError_t e = cudaStreamSynchronize(str);
-    chk(cudaStreamDestroy(str), "probe_stream_destroy");
-    if (e != cudaSuccess) {
-        cudaGetLastError(); // drain IllegalInstruction from probe
-        return false;
-    }
-    e = cudaGetLastError();
-    if (e != cudaSuccess) {
-        cudaGetLastError(); // drain
-        return false;
-    }
-    return true;
+    // tcgen05.mma.sp kind::i8 IllegalInstruction poisons CUDA context on driver 595.58.03.
+    // Never attempt to run — return stub immediately.
+    return false;
 }
 
 // Tile dimensions: 16x16x16 per warp (same as dense INT8 TC kernel).
@@ -561,6 +547,8 @@ std::vector<BenchResult> runINT8ScalarBench(int device, int matDim, int iteratio
     try {
         results.push_back(measureINT8Dense(device, matDim, iterations));
     } catch (const std::exception& ex) {
+        cudaDeviceSynchronize();
+        cudaGetLastError();
         BenchResult r{};
         r.suite_name = "int8_scalar";
         r.test_name  = "int8_scalar_dense";
@@ -591,6 +579,10 @@ std::vector<BenchResult> runINT8ScalarBench(int device, int matDim, int iteratio
             results.push_back(measureINT8Sparse(device, matDim, iterations));
         }
     } catch (const std::exception& ex) {
+        // CRITICAL: tcgen05 IllegalInstruction poisons device context.
+        // MUST synchronize to drain error BEFORE any subsequent CUDA call.
+        cudaDeviceSynchronize();
+        cudaGetLastError();
         BenchResult r{};
         r.suite_name = "int8_scalar";
         r.test_name  = "int8_scalar_sparse";

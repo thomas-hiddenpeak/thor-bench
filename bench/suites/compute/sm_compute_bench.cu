@@ -8,12 +8,28 @@
 #include <cmath>
 #include <sstream>
 #include <stdexcept>
+#include <chrono>
+#include <ctime>
+#include "sweep_schema.h"
+#include "power_monitor.h"
+
+static std::string getSweepTimestamp() {
+    auto now = std::chrono::system_clock::now();
+    auto time_t_now = std::chrono::system_clock::to_time_t(now);
+    struct tm tm_buf{};
+    localtime_r(&time_t_now, &tm_buf);
+    std::ostringstream oss;
+    oss << std::put_time(&tm_buf, "%Y-%m-%dT%H:%M:%S");
+    return oss.str();
+}
 
 namespace deusridet::bench {
 
 namespace {
 
 constexpr int kTpb = 256;
+
+
 
 // --- FP32 FMA kernel ---
 __global__ void fp32FMAKernel(float* a, float* b, float* c, size_t n, int burns) {
@@ -418,7 +434,48 @@ std::vector<BenchResult> runSMComputeBench(int device, int blockSizes[], int num
 
 } // namespace deusridet::bench
 
-BENCH_REGISTER_SUITE(sm_compute, "SM FP32/FP64 compute throughput",
-    ([](deusridet::bench::BenchRunner& runner) -> std::vector<deusridet::bench::BenchResult> {
-        return deusridet::bench::runSMComputeBench(0, nullptr, 0, 10);
-    }));
+BENCH_REGISTER_SWEEP_SUITE(sm_compute, "SM FP32/FP64 compute throughput",
+    [](deusridet::bench::BenchRunner& runner, int device) -> std::vector<deusridet::bench::SweepReport> {
+        deusridet::bench::SweepReport report;
+        report.suite_name = "sm_compute";
+        report.description = "SM FP32/FP64 compute throughput";
+        report.param_names.push_back("burn_cycles");
+
+        deusridet::bench::PowerMonitor pm;
+        pm.init();
+
+        for (int burns : std::vector<int>{128}) {
+            deusridet::bench::SweepResult point;
+            point.suite_name = "sm_compute";
+            point.test_name = "fp32_fma/fp64_fma/regspill";
+            {
+                std::ostringstream p;
+                p << "{\"burn_cycles\":" << burns << "}";
+                point.params_json = p.str();
+            }
+            pm.markStart();
+            try {
+                auto benchResults = deusridet::bench::runSMComputeBench(device, nullptr, 0, 10);
+                if (!benchResults.empty()) {
+                    point.result = benchResults[0];
+                }
+            } catch (const std::exception& e) {
+                point.error_message = e.what();
+            }
+            point.power_watts = pm.markEnd();
+            point.timestamp = getSweepTimestamp();
+            report.points.push_back(point);
+        }
+
+        pm.shutdown();
+
+        report.total_points   = static_cast<int>(report.points.size());
+        report.success_points = 0;
+        report.error_points   = 0;
+        for (const auto& pt : report.points) {
+            if (pt.error_message.has_value()) ++report.error_points;
+            else ++report.success_points;
+        }
+
+        return {report};
+    });

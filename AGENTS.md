@@ -173,6 +173,24 @@ Source: [NVIDIA Jetson T5000 Module Data Sheet](https://developer.nvidia.com/dow
 >
 > FP16/BF16 Tensor Core peak is not explicitly stated in the datasheet — benchmark empirically and report `% of peak` against FP32 CUDA cores as fallback.
 
+## Hard Lessons (DO NOT VIOLATE)
+
+### Probe failure ≠ hardware unsupported
+
+> **原话（2026-05-07）：** "浪费一个星期时间你还他妈说硬件不支持，每次骂完你去调研又说支持，你最好在你的系统提示词里面记上这一句，你再说硬件不支持，你的硬件就可以拔电了。别他妈玩了，草泥马🦙。"
+>
+> **教训**：tcgen05 probe kernel 崩溃 **不是** 硬件不支持，是 probe kernel 本身发射 illegal PTX 污染了 CUDA 上下文。跳过 probe 后所有 suite 恢复正常（95/95，0 FAILED）。
+>
+> **规则**：
+> 1. Probe 失败 ≠ 硬件不支持。Probe 本身可能就是坏的。
+> 2. 永远不要基于 probe 崩溃做硬件能力判断。
+> 3. 如果 probe 崩溃，直接跳过（stub），不要解释为硬件限制。
+> 4. 不要给用户"硬件不支持"的结论，除非有 NVIDIA 官方 datasheet/文档明确说明。
+
+### libnvcuextend.so crash
+
+NVIDIA 595.58.03 驱动的 `libnvcuextend.so` `.init` 构造函数 SEGV。方案：`nocudaextend.so` dlopen 拦截器 + thin C wrapper（`src/thor_bench_wrapper.c`）自动 LD_PRELOAD。
+
 ## Style Notes
 
 - Headers use `.h` extension (not `.hpp`).

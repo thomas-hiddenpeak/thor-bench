@@ -7,6 +7,11 @@
 #include <cmath>
 #include <sstream>
 #include <stdexcept>
+#include <iomanip>
+#include <chrono>
+#include <ctime>
+#include "sweep_schema.h"
+#include "power_monitor.h"
 
 namespace deusridet::bench {
 
@@ -203,7 +208,58 @@ std::vector<BenchResult> runTMACopyBench(int device, size_t transferSize, int it
 
 #include "bench_suites.h"
 
-BENCH_REGISTER_SUITE(tma_copy, "TMA async copy bandwidth (mempool)",
-    [](deusridet::bench::BenchRunner&) -> std::vector<deusridet::bench::BenchResult> {
-        return deusridet::bench::runTMACopyBench(0, 256*1024*1024, 10);
+static std::string getSweepTimestamp() {
+    auto now = std::chrono::system_clock::now();
+    auto time_t_now = std::chrono::system_clock::to_time_t(now);
+    struct tm tm_buf{};
+    localtime_r(&time_t_now, &tm_buf);
+    std::ostringstream oss;
+    oss << std::put_time(&tm_buf, "%Y-%m-%dT%H:%M:%S");
+    return oss.str();
+}
+
+BENCH_REGISTER_SWEEP_SUITE(tma_copy, "TMA async copy bandwidth (mempool)",
+    [](deusridet::bench::BenchRunner& runner, int device) -> std::vector<deusridet::bench::SweepReport> {
+        deusridet::bench::SweepReport report;
+        report.suite_name = "tma_copy";
+        report.description = "TMA async copy bandwidth (mempool)";
+        report.param_names.push_back("transfer_bytes");
+
+        deusridet::bench::PowerMonitor pm;
+        pm.init();
+
+        for (size_t transferSize : std::vector<size_t>{64*1024*1024, 128*1024*1024, 256*1024*1024, 512*1024*1024}) {
+            deusridet::bench::SweepResult point;
+            point.suite_name = "tma_copy";
+            point.test_name = "tma_copy_h2d/d2h/d2d";
+            {
+                std::ostringstream p;
+                p << "{\"transfer_bytes\":" << transferSize << "}";
+                point.params_json = p.str();
+            }
+            pm.markStart();
+            try {
+                auto benchResults = deusridet::bench::runTMACopyBench(device, transferSize, 10);
+                if (!benchResults.empty()) {
+                    point.result = benchResults[0];
+                }
+            } catch (const std::exception& e) {
+                point.error_message = e.what();
+            }
+            point.power_watts = pm.markEnd();
+            point.timestamp = getSweepTimestamp();
+            report.points.push_back(point);
+        }
+
+        pm.shutdown();
+
+        report.total_points   = static_cast<int>(report.points.size());
+        report.success_points = 0;
+        report.error_points   = 0;
+        for (const auto& pt : report.points) {
+            if (pt.error_message.has_value()) ++report.error_points;
+            else ++report.success_points;
+        }
+
+        return {report};
     });

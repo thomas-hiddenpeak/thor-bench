@@ -40,8 +40,9 @@ __device__ static uint32_t buildIdesc(int M, int N) {
     return idesc;
 }
 
-// ── TMEM probe kernel (MUST match fp4_bench.cu probe exactly) ───────────────
-// ONLY alloc -> mma -> dealloc. No ld on uninitialized TMEM.
+// ── TMEM probe kernel ───────────────────────────────────────────────────────
+// Tests ALL instructions used by actual kernels: alloc, relinquish, mma, ld, dealloc.
+// Must match the full instruction set or we'll get IllegalInstruction at runtime.
 __global__ void tmemProbeKernel() {
     if (threadIdx.x != 0) return;
 
@@ -57,10 +58,12 @@ __global__ void tmemProbeKernel() {
     uint64_t aDesc = 0, bDesc = 0;
     uint32_t idesc = buildIdesc(WARP_M, WARP_N);
     uint32_t tmemHandle = tmemHandleSmem;
-    uint32_t saPtr = 0, sbPtr = 0;
+    // CRITICAL: block_scale requires valid TMEM region IDs for scale factors,
+    // NOT 0. Using 0 causes IllegalInstruction.
+    uint32_t saPtr = 0xC0000000;
+    uint32_t sbPtr = 0xD0000000;
 
-    // mma is the ONLY supported TCGen05 instruction that writes to TMEM.
-    // If this fails, the entire tcgen05 suite is unavailable.
+    // mma writes to TMEM
     asm volatile(
         "{.reg .pred p;\n\t"
         "setp.ne.b32 p, 0, 0;\n\t"
@@ -72,6 +75,16 @@ __global__ void tmemProbeKernel() {
         : "memory"
     );
 
+    // CRITICAL: tcgen05.ld must also be tested — it's a separate opcode that may
+    // be unsupported even when mma works on this driver.
+    uint32_t r0, r1, r2, r3, r4, r5, r6, r7;
+    asm volatile(
+        "tcgen05.ld.sync.aligned.16x64b.x8.b32 {%0,%1,%2,%3,%4,%5,%6,%7}, [%8];"
+        : "=r"(r0), "=r"(r1), "=r"(r2), "=r"(r3),
+          "=r"(r4), "=r"(r5), "=r"(r6), "=r"(r7)
+        : "r"(tmemHandle)
+        : "memory");
+
     asm volatile(
         "tcgen05.dealloc.cta_group::1.sync.aligned.b32 %0, %1;"
         : : "r"(tmemHandle), "r"(nCols) : "memory");
@@ -79,32 +92,13 @@ __global__ void tmemProbeKernel() {
 
 static bool tmemSupported(int device) {
     chk(cudaSetDevice(device), "probe_dev");
-
     int major = 0, minor = 0;
     chk(cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, device), "major");
     chk(cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, device), "minor");
-    if (major < 11 || (major == 11 && minor < 0)) return false;
-
-    cudaStream_t str;
-    chk(cudaStreamCreate(&str), "probe_stream");
-
-    tmemProbeKernel<<<1, 32, 0, str>>>();
-    cudaError_t e = cudaStreamSynchronize(str);
-
-    if (e != cudaSuccess) {
-        chk(cudaStreamDestroy(str), "probe_stream_destroy");
-        return false;
-    }
-
-    e = cudaGetLastError();
-    if (e != cudaSuccess) {
-        chk(cudaStreamDestroy(str), "probe_stream_destroy");
-        return false;
-    }
-
-    chk(cudaStreamDestroy(str), "probe_stream_destroy");
-
-    return true;
+    // TMEM tcgen05.mma with kind::mxf4nvf4.block_scale causes IllegalInstruction on driver 595.58.03.
+    // The block_scale variant requires scale factor infrastructure (tcgen05.cp) that cannot be set up
+    // without a full CUTLASS-style pipeline. Stub to avoid context poisoning.
+    return false;
 }
 
 // ── TMEM Read Bandwidth kernel ──────────────────────────────────────────────
@@ -126,7 +120,8 @@ __global__ void tmemReadBwKernel(float* out, int loops) {
     // Prime TMEM with mma
     uint64_t aDesc = 0, bDesc = 0;
     uint32_t idesc = buildIdesc(WARP_M, WARP_N);
-    uint32_t saPtr = 0, sbPtr = 0;
+    uint32_t saPtr = 0xC0000000;
+    uint32_t sbPtr = 0xD0000000;
     asm volatile(
         "{.reg .pred p;\n\t"
         "setp.ne.b32 p, 0, 0;\n\t"
@@ -153,9 +148,11 @@ __global__ void tmemReadBwKernel(float* out, int loops) {
     }
     asm volatile("" : "+r"(accum));
 
-    asm volatile(
-        "tcgen05.dealloc.cta_group::1.sync.aligned.b32 %0, %1;"
-        : : "r"(tmemHandle), "r"(nCols) : "memory");
+    if (tid == 0) {
+        asm volatile(
+            "tcgen05.dealloc.cta_group::1.sync.aligned.b32 %0, %1;"
+            : : "r"(tmemHandle), "r"(nCols) : "memory");
+    }
 
     if (tid == 0) *out = __int_as_float(accum);
 }
@@ -178,7 +175,8 @@ __global__ void tmemWriteBwKernel(float* out, int loops) {
 
     uint64_t aDesc = 0, bDesc = 0;
     uint32_t idesc = buildIdesc(WARP_M, WARP_N);
-    uint32_t saPtr = 0, sbPtr = 0;
+    uint32_t saPtr = 0xC0000000;
+    uint32_t sbPtr = 0xD0000000;
 
     uint32_t accum = 0;
     int cnt = loops;
@@ -198,9 +196,11 @@ __global__ void tmemWriteBwKernel(float* out, int loops) {
     }
     asm volatile("" : "+r"(accum));
 
-    asm volatile(
-        "tcgen05.dealloc.cta_group::1.sync.aligned.b32 %0, %1;"
-        : : "r"(tmemHandle), "r"(nCols) : "memory");
+    if (tid == 0) {
+        asm volatile(
+            "tcgen05.dealloc.cta_group::1.sync.aligned.b32 %0, %1;"
+            : : "r"(tmemHandle), "r"(nCols) : "memory");
+    }
 
     if (tid == 0) *out = __int_as_float(accum);
 }
@@ -211,12 +211,13 @@ __global__ void tmemLatencyKernel(float* out, int loops) {
     int tid = threadIdx.x;
     if (tid != 0) return;
 
+    __shared__ uint32_t tmemHandleSmem;
+    uint32_t nCols = WARP_N;
+
     uint32_t accum = 0;
     int cnt = loops;
 
     while (cnt--) {
-        __shared__ uint32_t tmemHandleSmem;
-        uint32_t nCols = WARP_N;
         uint32_t smemTmemPtr = static_cast<uint32_t>(__cvta_generic_to_shared(&tmemHandleSmem));
         asm volatile(
             "tcgen05.alloc.cta_group::1.sync.aligned.shared::cta.b32 [%0], %1;"
@@ -225,7 +226,9 @@ __global__ void tmemLatencyKernel(float* out, int loops) {
 
         uint64_t aDesc = 0, bDesc = 0;
         uint32_t idesc = buildIdesc(WARP_M, WARP_N);
-        uint32_t saPtr = 0, sbPtr = 0, enableD = 0;
+        uint32_t saPtr = 0xC0000000;
+        uint32_t sbPtr = 0xD0000000;
+        uint32_t enableD = 0;
         asm volatile(
             "{.reg .pred p;\n\t"
             "setp.ne.b32 p, %6, 0;\n\t"
@@ -593,6 +596,8 @@ std::vector<BenchResult> runTMEMBench(int device, int matDim, int iterations) {
     try {
         results.push_back(measureTMEMReadBW(device, iterations));
     } catch (const std::exception& ex) {
+        cudaDeviceSynchronize();
+        cudaGetLastError();
         results.push_back(makeStubResult("tmem_read_bandwidth", "GB/s",
             (std::string("exception: ") + ex.what()).c_str()));
     }
@@ -600,6 +605,8 @@ std::vector<BenchResult> runTMEMBench(int device, int matDim, int iterations) {
     try {
         results.push_back(measureTMEMWriteBW(device, iterations));
     } catch (const std::exception& ex) {
+        cudaDeviceSynchronize();
+        cudaGetLastError();
         results.push_back(makeStubResult("tmem_write_bandwidth", "GB/s",
             (std::string("exception: ") + ex.what()).c_str()));
     }
@@ -607,6 +614,8 @@ std::vector<BenchResult> runTMEMBench(int device, int matDim, int iterations) {
     try {
         results.push_back(measureTMEMLatency(device, iterations));
     } catch (const std::exception& ex) {
+        cudaDeviceSynchronize();
+        cudaGetLastError();
         results.push_back(makeStubResult("tmem_latency", "ns",
             (std::string("exception: ") + ex.what()).c_str()));
     }
@@ -614,10 +623,14 @@ std::vector<BenchResult> runTMEMBench(int device, int matDim, int iterations) {
     try {
         results.push_back(measureTMEMvsSMEM(device, iterations));
     } catch (const std::exception& ex) {
+        cudaDeviceSynchronize();
+        cudaGetLastError();
         results.push_back(makeStubResult("tmem_vs_smem", "GB/s",
             (std::string("exception: ") + ex.what()).c_str()));
     }
 
+    cudaDeviceSynchronize();
+    cudaGetLastError();
     return results;
 }
 

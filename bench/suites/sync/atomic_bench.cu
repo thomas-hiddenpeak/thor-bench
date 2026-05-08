@@ -150,11 +150,11 @@ std::vector<BenchResult> runAtomicBench(int device, int iterations) {
 
     chk(cudaSetDevice(device), "dev");
 
-    constexpr int grid   = 16;    // 16 blocks
-    constexpr int threads = 256;  // 256 threads/block = 4096 total threads
-    constexpr int burns   = 64;   // iterations per thread per sample
-    // Number of counters: small enough to force contention, large enough for throughput.
-    constexpr int numCounters = 64;
+    constexpr int grid   = 1;     // 1 block
+    constexpr int threads = 1024; // 1024 threads/block
+    constexpr int burns   = 10;   // iterations per thread per sample
+    // Number of counters: single counter to force contention.
+    constexpr int numCounters = 1;
 
     // -----------------------------------------------------------------------
     // 1. atomicAdd (int)

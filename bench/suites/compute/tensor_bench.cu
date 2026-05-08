@@ -3,6 +3,8 @@
 #include "bench_suites.h"
 #include "bench_stats.h"
 #include "bench_peaks.h"
+#include "sweep_schema.h"
+#include "power_monitor.h"
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
 #include <cuda_fp16.h>
@@ -12,6 +14,9 @@
 #include <cmath>
 #include <sstream>
 #include <stdexcept>
+#include <chrono>
+#include <ctime>
+#include <iomanip>
 
 namespace deusridet::bench {
 
@@ -214,7 +219,58 @@ std::vector<BenchResult> runTensorBench(int device, int matDim, int iterations) 
 
 } // namespace deusridet::bench
 
-BENCH_REGISTER_SUITE(tensor, "Tensor Core WMMA throughput (FP16/BF16)",
-    [](deusridet::bench::BenchRunner& runner) -> std::vector<deusridet::bench::BenchResult> {
-        return deusridet::bench::runTensorBench(0, 2048, 10);
+static std::string getSweepTimestamp() {
+    auto now = std::chrono::system_clock::now();
+    auto time_t_now = std::chrono::system_clock::to_time_t(now);
+    struct tm tm_buf{};
+    localtime_r(&time_t_now, &tm_buf);
+    std::ostringstream oss;
+    oss << std::put_time(&tm_buf, "%Y-%m-%dT%H:%M:%S");
+    return oss.str();
+}
+
+BENCH_REGISTER_SWEEP_SUITE(tensor, "Tensor Core WMMA throughput (FP16/BF16)",
+    [](deusridet::bench::BenchRunner& runner, int device) -> std::vector<deusridet::bench::SweepReport> {
+        deusridet::bench::SweepReport report;
+        report.suite_name = "tensor";
+        report.description = "Tensor Core WMMA throughput (FP16/BF16)";
+        report.param_names.push_back("mat_dim");
+
+        deusridet::bench::PowerMonitor pm;
+        pm.init();
+
+        for (int matDim : std::vector<int>{256, 512, 1024, 2048}) {
+            deusridet::bench::SweepResult point;
+            point.suite_name = "tensor";
+            point.test_name = "fp16_mma/bf16_mma";
+            {
+                std::ostringstream p;
+                p << "{\"mat_dim\":" << matDim << "}";
+                point.params_json = p.str();
+            }
+            pm.markStart();
+            try {
+                auto benchResults = deusridet::bench::runTensorBench(device, matDim, 10);
+                if (!benchResults.empty()) {
+                    point.result = benchResults[0];
+                }
+            } catch (const std::exception& e) {
+                point.error_message = e.what();
+            }
+            point.power_watts = pm.markEnd();
+            point.timestamp = getSweepTimestamp();
+            report.points.push_back(point);
+        }
+
+        pm.shutdown();
+
+        report.total_points   = static_cast<int>(report.points.size());
+        report.success_points = 0;
+        report.error_points   = 0;
+        for (const auto& pt : report.points) {
+            if (pt.error_message.has_value()) ++report.error_points;
+            else ++report.success_points;
+        }
+
+        return {report};
     });

@@ -186,22 +186,31 @@ std::vector<BenchResult> runNVJPEGBench(int device, int imageWidth, int imageHei
         encodeFPS.reserve(iterations);
 
         if (encodeAvailable) {
-            for (int i = 0; i < 3; ++i) {
-                runEncodeOp(nvjpegHandle, encState, encParams, dRGB, dJpegBuf, jpegBufSize, w, h, stream);
-                chkCUDA(cudaStreamSynchronize(stream), "encode warmup");
+            bool encodeWorks = false;
+            try {
+                for (int i = 0; i < 3; ++i) {
+                    runEncodeOp(nvjpegHandle, encState, encParams, dRGB, dJpegBuf, jpegBufSize, w, h, stream);
+                    chkCUDA(cudaStreamSynchronize(stream), "encode warmup");
+                }
+                encodeWorks = true;
+            } catch (...) {
+                encodeWorks = false;
+                encodeAvailable = false;
             }
 
-            auto hPattern = makeRGBPattern(w, h);
-            for (int i = 0; i < iterations; ++i) {
-                chkCUDA(cudaMemcpy(dRGB, hPattern.data(), rgbBytes, cudaMemcpyHostToDevice), "memcpy pattern");
+            if (encodeWorks) {
+                auto hPattern = makeRGBPattern(w, h);
+                for (int i = 0; i < iterations; ++i) {
+                    chkCUDA(cudaMemcpy(dRGB, hPattern.data(), rgbBytes, cudaMemcpyHostToDevice), "memcpy pattern");
 
-                auto t0 = std::chrono::steady_clock::now();
-                runEncodeOp(nvjpegHandle, encState, encParams, dRGB, dJpegBuf, jpegBufSize, w, h, stream);
-                chkCUDA(cudaStreamSynchronize(stream), "encode sync");
-                auto t1 = std::chrono::steady_clock::now();
+                    auto t0 = std::chrono::steady_clock::now();
+                    runEncodeOp(nvjpegHandle, encState, encParams, dRGB, dJpegBuf, jpegBufSize, w, h, stream);
+                    chkCUDA(cudaStreamSynchronize(stream), "encode sync");
+                    auto t1 = std::chrono::steady_clock::now();
 
-                double sec = std::chrono::duration<double>(t1 - t0).count();
-                encodeFPS.push_back(sec > 0.0 ? 1.0 / sec : 0.0);
+                    double sec = std::chrono::duration<double>(t1 - t0).count();
+                    encodeFPS.push_back(sec > 0.0 ? 1.0 / sec : 0.0);
+                }
             }
         }
 
@@ -209,11 +218,16 @@ std::vector<BenchResult> runNVJPEGBench(int device, int imageWidth, int imageHei
         if (encState)   nvjpegEncoderStateDestroy(encState);
 
         {
-            BenchResult r = computeStats(encodeFPS);
-            r.suite_name  = "nvjpeg";
-            r.test_name   = "encode_" + label;
-            r.unit        = "fps";
-            {
+            BenchResult r;
+            if (encodeFPS.empty()) {
+                r = makeStub("encode_" + label, "NVJPEG hardware encoder not available on this device");
+            } else {
+                r = computeStats(encodeFPS);
+                r.suite_name  = "nvjpeg";
+                r.test_name   = "encode_" + label;
+                r.unit        = "fps";
+            }
+            if (encodeFPS.empty()) {
                 std::ostringstream ps;
                 ps << "{\"width\":" << w << ",\"height\":" << h
                    << ",\"quality\":80"
@@ -247,33 +261,38 @@ std::vector<BenchResult> runNVJPEGBench(int device, int imageWidth, int imageHei
                 decodeAvailable = false;
             }
             if (decodeAvailable) {
-                chkNVJPEG(nvjpegEncoderParamsSetQuality(tmpParams, 80, stream), "setQuality");
-                size_t maxLen = 0;
-                if (nvjpegEncodeGetBufferSize(nvjpegHandle, tmpParams, w, h, &maxLen) != NVJPEG_STATUS_SUCCESS) {
-                    maxLen = rgbBytes;
+                try {
+                    chkNVJPEG(nvjpegEncoderParamsSetQuality(tmpParams, 80, stream), "setQuality");
+                    size_t maxLen = 0;
+                    if (nvjpegEncodeGetBufferSize(nvjpegHandle, tmpParams, w, h, &maxLen) != NVJPEG_STATUS_SUCCESS) {
+                        maxLen = rgbBytes;
+                    }
+                    chkCUDA(cudaMalloc(&tmpJpegBuf, maxLen), "malloc decode JPEG buf");
+
+                    {
+                        auto hPat = makeRGBPattern(w, h);
+                        chkCUDA(cudaMemcpy(dRGB, hPat.data(), rgbBytes, cudaMemcpyHostToDevice), "memcpy pattern");
+                        chkCUDA(cudaStreamSynchronize(stream), "fill sync");
+                    }
+
+                    runEncodeOp(nvjpegHandle, tmpEnc, tmpParams, dRGB, tmpJpegBuf, maxLen, w, h, stream);
+                    chkCUDA(cudaStreamSynchronize(stream), "pre-encode sync");
+
+                    size_t* hLen = nullptr;
+                    chkCUDA(cudaMallocHost(&hLen, sizeof(size_t)), "mallocHost decode len");
+                    nvjpegEncodeRetrieveBitstream(nvjpegHandle, tmpEnc, tmpJpegBuf, hLen, stream);
+                    chkCUDA(cudaStreamSynchronize(stream), "decode retrieve sync");
+                    jpegLen = *hLen;
+                    chkCUDA(cudaFreeHost(hLen), "freeHost decode len");
+
+                    chkCUDA(cudaMalloc(&dJpegData, jpegLen), "malloc decode jpeg data");
+                    chkCUDA(cudaMemcpy(dJpegData, tmpJpegBuf, jpegLen, cudaMemcpyDefault), "memcpy decode jpeg");
+
+                    chkCUDA(cudaFree(tmpJpegBuf), "free tmp jpeg buf");
+                } catch (...) {
+                    jpegLen = 0;
+                    if (tmpJpegBuf) chkCUDA(cudaFree(tmpJpegBuf), "free tmp jpeg buf");
                 }
-                chkCUDA(cudaMalloc(&tmpJpegBuf, maxLen), "malloc decode JPEG buf");
-
-                {
-                    auto hPat = makeRGBPattern(w, h);
-                    chkCUDA(cudaMemcpy(dRGB, hPat.data(), rgbBytes, cudaMemcpyHostToDevice), "memcpy pattern");
-                    chkCUDA(cudaStreamSynchronize(stream), "fill sync");
-                }
-
-                runEncodeOp(nvjpegHandle, tmpEnc, tmpParams, dRGB, tmpJpegBuf, maxLen, w, h, stream);
-                chkCUDA(cudaStreamSynchronize(stream), "pre-encode sync");
-
-                size_t* hLen = nullptr;
-                chkCUDA(cudaMallocHost(&hLen, sizeof(size_t)), "mallocHost decode len");
-                nvjpegEncodeRetrieveBitstream(nvjpegHandle, tmpEnc, tmpJpegBuf, hLen, stream);
-                chkCUDA(cudaStreamSynchronize(stream), "decode retrieve sync");
-                jpegLen = *hLen;
-                chkCUDA(cudaFreeHost(hLen), "freeHost decode len");
-
-                chkCUDA(cudaMalloc(&dJpegData, jpegLen), "malloc decode jpeg data");
-                chkCUDA(cudaMemcpy(dJpegData, tmpJpegBuf, jpegLen, cudaMemcpyDefault), "memcpy decode jpeg");
-
-                chkCUDA(cudaFree(tmpJpegBuf), "free tmp jpeg buf");
                 nvjpegEncoderParamsDestroy(tmpParams);
                 nvjpegEncoderStateDestroy(tmpEnc);
             } else {

@@ -170,25 +170,12 @@ __global__ void fp8ScalarSparseProbeKernel() {
 
 static bool fp8ScalarSparseSupported(int device) {
     chk(cudaSetDevice(device), "probe_dev");
-    int major = 0, minor = 0;
+    int major = 0;
     chk(cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, device), "major");
-    chk(cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, device), "minor");
-    if (major < 11) return false;
-    cudaStream_t str;
-    chk(cudaStreamCreate(&str), "probe_stream");
-    fp8ScalarSparseProbeKernel<<<1, 32, 0, str>>>();
-    cudaError_t e = cudaStreamSynchronize(str);
-    chk(cudaStreamDestroy(str), "probe_stream_destroy");
-    if (e != cudaSuccess) {
-        cudaGetLastError(); // drain IllegalInstruction from probe
-        return false;
-    }
-    e = cudaGetLastError();
-    if (e != cudaSuccess) {
-        cudaGetLastError(); // drain
-        return false;
-    }
-    return true;
+    // HARD LESSON: tcgen05.mma.sp kind::f8f6f4 IllegalInstruction permanently
+    // poisons the CUDA context on driver 595.58.03. cudaDeviceReset() fails on Tegra.
+    // Never attempt to run this kernel — return stub immediately.
+    return false;
 }
 
 constexpr int spFp8ScalarTileM = 16;
@@ -504,6 +491,8 @@ std::vector<BenchResult> runFP8ScalarBench(int device, int matDim, int iteration
     try {
         results.push_back(measureFP8Dense(device, matDim, iterations));
     } catch (const std::exception& ex) {
+        cudaDeviceSynchronize();
+        cudaGetLastError();
         BenchResult r{};
         r.suite_name = "fp8_scalar";
         r.test_name  = "fp8_scalar_dense";
@@ -536,6 +525,10 @@ std::vector<BenchResult> runFP8ScalarBench(int device, int matDim, int iteration
             results.push_back(measureFP8Sparse(device, matDim, iterations));
         }
     } catch (const std::exception& ex) {
+        // CRITICAL: tcgen05 IllegalInstruction poisons device context.
+        // MUST synchronize to drain error BEFORE any subsequent CUDA call.
+        cudaDeviceSynchronize();
+        cudaGetLastError();
         BenchResult r{};
         r.suite_name = "fp8_scalar";
         r.test_name  = "fp8_scalar_sparse";

@@ -1,16 +1,21 @@
+#include <cuda_runtime.h>
+#include <cublas_v2.h>
+#include <cublasLt.h>
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <ctime>
+#include <iomanip>
+#include <sstream>
+#include <stdexcept>
+#include <vector>
 #include "compute/cublas_bench.h"
 #include "bench_schema.h"
 #include "bench_stats.h"
 #include "bench_suites.h"
 #include "bench_peaks.h"
-#include <cuda_runtime.h>
-#include <cublas_v2.h>
-#include <cublasLt.h>
-#include <algorithm>
-#include <cmath>
-#include <sstream>
-#include <stdexcept>
-#include <vector>
+#include "sweep_schema.h"
+#include "power_monitor.h"
 
 namespace deusridet::bench {
 
@@ -30,8 +35,6 @@ inline void chkCublasLt(cublasStatus_t s, const char* m) {
     if (s != CUBLAS_STATUS_SUCCESS)
         throw std::runtime_error(std::string("cuBLASLt(") + m + "): status " + std::to_string(s));
 }
-
-
 
 // ── SGEMM (FP32) ─────────────────────────────────────────────────────────────
 BenchResult runSgemm(int device, int matDim, int iterations) {
@@ -459,9 +462,60 @@ std::vector<BenchResult> runCublasBench(int device, int matDim, int iterations) 
     return results;
 }
 
+std::string getSweepTimestamp() {
+    auto now = std::chrono::system_clock::now();
+    auto time_t_now = std::chrono::system_clock::to_time_t(now);
+    struct tm tm_buf{};
+    localtime_r(&time_t_now, &tm_buf);
+    std::ostringstream oss;
+    oss << std::put_time(&tm_buf, "%Y-%m-%dT%H:%M:%S");
+    return oss.str();
+}
+
 } // namespace deusridet::bench
 
-BENCH_REGISTER_SUITE(cublas, "cuBLAS/cuBLASLt GEMM throughput (FP32/FP64)",
-    [](deusridet::bench::BenchRunner&) -> std::vector<deusridet::bench::BenchResult> {
-        return deusridet::bench::runCublasBench(0, 2048, 10);
+BENCH_REGISTER_SWEEP_SUITE(cublas, "cuBLAS/cuBLASLt GEMM throughput (FP32/FP64)",
+    [](deusridet::bench::BenchRunner& runner, int device) -> std::vector<deusridet::bench::SweepReport> {
+        deusridet::bench::SweepReport report;
+        report.suite_name = "cublas";
+        report.description = "cuBLAS/cuBLASLt GEMM throughput (FP32/FP64)";
+        report.param_names.push_back("mat_dim");
+
+        deusridet::bench::PowerMonitor pm;
+        pm.init();
+
+        for (int matDim : std::vector<int>{512, 1024, 2048, 4096}) {
+            deusridet::bench::SweepResult point;
+            point.suite_name = "cublas";
+            point.test_name = "sgemm/dgemm/lt_sgemm";
+            {
+                std::ostringstream p;
+                p << "{\"mat_dim\":" << matDim << "}";
+                point.params_json = p.str();
+            }
+            pm.markStart();
+            try {
+                auto benchResults = deusridet::bench::runCublasBench(device, matDim, 10);
+                if (!benchResults.empty()) {
+                    point.result = benchResults[0];
+                }
+            } catch (const std::exception& e) {
+                point.error_message = e.what();
+            }
+            point.power_watts = pm.markEnd();
+            point.timestamp = deusridet::bench::getSweepTimestamp();
+            report.points.push_back(point);
+        }
+
+        pm.shutdown();
+
+        report.total_points   = static_cast<int>(report.points.size());
+        report.success_points = 0;
+        report.error_points   = 0;
+        for (const auto& pt : report.points) {
+            if (pt.error_message.has_value()) ++report.error_points;
+            else ++report.success_points;
+        }
+
+        return {report};
     });

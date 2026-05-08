@@ -31,6 +31,7 @@ struct BenchResult {
 
     std::optional<double> score;
     std::optional<double> peak_pct;
+    std::optional<double> power_watts;
 
     int sample_count = 0;
     int warmup_count = 0;

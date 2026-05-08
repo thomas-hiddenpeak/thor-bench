@@ -5,6 +5,9 @@
 #include <device_launch_parameters.h>
 #include <algorithm>
 #include <cmath>
+#include <chrono>
+#include <ctime>
+#include <iomanip>
 #include <sstream>
 #include <stdexcept>
 #include <vector>
@@ -533,9 +536,64 @@ std::vector<BenchResult> runTegraMemoryBench(int device, size_t transferSize, in
 
 } // namespace deusridet::bench
 
+#include "sweep_schema.h"
+#include "power_monitor.h"
+#include <chrono>
+#include <ctime>
 #include "bench_suites.h"
 
-BENCH_REGISTER_SUITE(tegra_memory, "Tegra SoC memory architecture benchmark (Device/Pinned/Registered/Pageable)",
-    [](deusridet::bench::BenchRunner&) -> std::vector<deusridet::bench::BenchResult> {
-        return deusridet::bench::runTegraMemoryBench(0, 256*1024*1024, 10);
+static std::string getSweepTimestamp() {
+    auto now = std::chrono::system_clock::now();
+    auto time_t_now = std::chrono::system_clock::to_time_t(now);
+    struct tm tm_buf{};
+    localtime_r(&time_t_now, &tm_buf);
+    std::ostringstream oss;
+    oss << std::put_time(&tm_buf, "%Y-%m-%dT%H:%M:%S");
+    return oss.str();
+}
+
+BENCH_REGISTER_SWEEP_SUITE(tegra_memory, "Tegra SoC memory architecture benchmark (Device/Pinned/Registered/Pageable)",
+    [](deusridet::bench::BenchRunner& runner, int device) -> std::vector<deusridet::bench::SweepReport> {
+        deusridet::bench::SweepReport report;
+        report.suite_name = "tegra_memory";
+        report.description = "Tegra SoC memory architecture benchmark (Device/Pinned/Registered/Pageable)";
+        report.param_names.push_back("transfer_bytes");
+
+        deusridet::bench::PowerMonitor pm;
+        pm.init();
+
+        for (size_t transferSize : std::vector<size_t>{64*1024*1024, 128*1024*1024, 256*1024*1024, 512*1024*1024}) {
+            deusridet::bench::SweepResult point;
+            point.suite_name = "tegra_memory";
+            point.test_name = "device/pinned/registered/pageable";
+            {
+                std::ostringstream p;
+                p << "{\"transfer_bytes\":" << transferSize << "}";
+                point.params_json = p.str();
+            }
+            pm.markStart();
+            try {
+                auto benchResults = deusridet::bench::runTegraMemoryBench(device, transferSize, 10);
+                if (!benchResults.empty()) {
+                    point.result = benchResults[0];
+                }
+            } catch (const std::exception& e) {
+                point.error_message = e.what();
+            }
+            point.power_watts = pm.markEnd();
+            point.timestamp = getSweepTimestamp();
+            report.points.push_back(point);
+        }
+
+        pm.shutdown();
+
+        report.total_points   = static_cast<int>(report.points.size());
+        report.success_points = 0;
+        report.error_points   = 0;
+        for (const auto& pt : report.points) {
+            if (pt.error_message.has_value()) ++report.error_points;
+            else ++report.success_points;
+        }
+
+        return {report};
     });

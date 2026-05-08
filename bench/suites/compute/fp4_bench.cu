@@ -8,10 +8,14 @@
 #include <cuda_fp4.h>
 #include <cuda_fp6.h>
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <ctime>
 #include <sstream>
 #include <stdexcept>
 #include <vector>
+#include "sweep_schema.h"
+#include "power_monitor.h"
 
 namespace deusridet::bench {
 
@@ -973,17 +977,23 @@ std::vector<BenchResult> runFP4Bench(int device, int matDim, int iterations) {
     try {
         results.push_back(measureFp4Dense(device, matDim, iterations));
     } catch (const std::exception& ex) {
+        // CRITICAL: tcgen05 IllegalInstruction poisons device context.
+        // MUST synchronize to drain error BEFORE any subsequent CUDA call.
+        cudaDeviceSynchronize();
+        cudaGetLastError();
         results.push_back(makeStubDense((std::string("exception: ") + ex.what()).c_str()));
         denseFailed = true;
     }
 
     // CRITICAL: If dense failed with IllegalInstruction, tcgen05 is unsupported.
     // Do NOT attempt sparse — it will also fail and further poison the context.
-    // Drain the pending error so benchmark_main's cudaGetLastError() stays clean.
+    // MUST synchronize to drain the illegal instruction error from the device
+    // BEFORE any subsequent CUDA API call, or the entire context stays poisoned.
     if (denseFailed) {
-        cudaGetLastError(); // drain async error
+        cudaDeviceSynchronize();
+        cudaGetLastError();
         results.push_back(makeStubSparse("tcgen05.mma.sp not supported (tcgen05.mma already failed)"));
-        cudaGetLastError(); // final drain
+        cudaGetLastError();
         return results;
     }
 
@@ -991,16 +1001,72 @@ std::vector<BenchResult> runFP4Bench(int device, int matDim, int iterations) {
         results.push_back(measureFp4Sparse(device, matDim, iterations));
     } catch (const std::exception& ex) {
         results.push_back(makeStubSparse((std::string("exception: ") + ex.what()).c_str()));
-        cudaGetLastError(); // drain
+        cudaDeviceSynchronize();
+        cudaGetLastError();
     }
 
-    cudaGetLastError(); // final drain of any pending state
+    cudaDeviceSynchronize();
+    cudaGetLastError();
     return results;
 }
 
 } // namespace deusridet::bench
 
-BENCH_REGISTER_SUITE(fp4, "FP4 e2m1 NVFP4 block-scaled GEMM via tcgen05.mma",
-    [](deusridet::bench::BenchRunner& runner) -> std::vector<deusridet::bench::BenchResult> {
-        return deusridet::bench::runFP4Bench(0, 2048, 10);
+static std::string getSweepTimestamp() {
+    auto now = std::chrono::system_clock::now();
+    auto time_t_now = std::chrono::system_clock::to_time_t(now);
+    struct tm tm_buf{};
+    localtime_r(&time_t_now, &tm_buf);
+    std::ostringstream oss;
+    oss << std::put_time(&tm_buf, "%Y-%m-%dT%H:%M:%S");
+    return oss.str();
+}
+
+BENCH_REGISTER_SWEEP_SUITE(fp4, "FP4 e2m1 NVFP4 block-scaled GEMM via tcgen05.mma",
+    [](deusridet::bench::BenchRunner& runner, int device) -> std::vector<deusridet::bench::SweepReport> {
+        using deusridet::bench::SweepReport;
+        using deusridet::bench::SweepResult;
+        using deusridet::bench::PowerMonitor;
+        SweepReport report;
+        report.suite_name = "fp4";
+        report.description = "FP4 e2m1 NVFP4 block-scaled GEMM via tcgen05.mma";
+        report.param_names.push_back("mat_dim");
+
+        PowerMonitor pm;
+        pm.init();
+
+        for (int matDim : std::vector<int>{1024, 2048}) {
+            SweepResult point;
+            point.suite_name = "fp4";
+            point.test_name = "fp4_nvfp4_dense/fp4_nvfp4_sparse";
+            {
+                std::ostringstream p;
+                p << "{\"mat_dim\":" << matDim << "}";
+                point.params_json = p.str();
+            }
+            pm.markStart();
+            try {
+                auto benchResults = deusridet::bench::runFP4Bench(device, matDim, 10);
+                if (!benchResults.empty()) {
+                    point.result = benchResults[0];
+                }
+            } catch (const std::exception& e) {
+                point.error_message = e.what();
+            }
+            point.power_watts = pm.markEnd();
+            point.timestamp = getSweepTimestamp();
+            report.points.push_back(point);
+        }
+
+        pm.shutdown();
+
+        report.total_points   = static_cast<int>(report.points.size());
+        report.success_points = 0;
+        report.error_points   = 0;
+        for (const auto& pt : report.points) {
+            if (pt.error_message.has_value()) ++report.error_points;
+            else ++report.success_points;
+        }
+
+        return {report};
     });

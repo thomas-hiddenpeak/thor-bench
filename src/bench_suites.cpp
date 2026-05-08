@@ -35,4 +35,31 @@ BenchSuiteRegistrar::BenchSuiteRegistrar(BenchSuite suite) {
     BenchSuiteRegistry::instance().registerSuite(std::move(suite));
 }
 
+void BenchSuiteRegistry::registerSweepSuite(BenchSweepSuite suite) {
+    sweepSuites_.push_back(std::move(suite));
+}
+
+std::vector<BenchSweepSuite>& BenchSuiteRegistry::allSweepSuites() {
+    std::sort(sweepSuites_.begin(), sweepSuites_.end(),
+        [](const BenchSweepSuite& a, const BenchSweepSuite& b) { return a.name < b.name; });
+    return sweepSuites_;
+}
+
+std::vector<BenchSweepSuite>& BenchSuiteRegistry::filteredSweepSuites(const std::vector<std::string>& names) {
+    if (names.empty()) return allSweepSuites();
+    std::vector<BenchSweepSuite> filtered;
+    std::vector<BenchSweepSuite> all = allSweepSuites();
+    for (const auto& s : all) {
+        if (std::find(names.begin(), names.end(), s.name) != names.end()) {
+            filtered.push_back(s);
+        }
+    }
+    sweepSuites_ = std::move(filtered);
+    return sweepSuites_;
+}
+
+BenchSweepSuiteRegistrar::BenchSweepSuiteRegistrar(BenchSweepSuite suite) {
+    BenchSuiteRegistry::instance().registerSweepSuite(std::move(suite));
+}
+
 } // namespace deusridet::bench

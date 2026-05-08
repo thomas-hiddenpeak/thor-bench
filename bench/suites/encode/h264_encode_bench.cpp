@@ -1,6 +1,8 @@
 #include "h264_encode_bench.h"
 #include "bench_suites.h"
 #include <cuda_runtime.h>
+#include <cuda.h>
+#include <nvEncodeAPI.h>
 #include <string>
 #include <sstream>
 #include <algorithm>
@@ -9,166 +11,336 @@
 #include <chrono>
 #include <vector>
 #include <stdexcept>
+#include <cstring>
 
 namespace deusridet::bench {
 
 namespace {
 
-inline void chk(cudaError_t e, const char* m) {
-    if (e != cudaSuccess)
-        throw std::runtime_error(std::string("CUDA(") + m + "): " + cudaGetErrorString(e));
-}
+struct NvencSession {
+    NV_ENCODE_API_FUNCTION_LIST api{};
+    void* session = nullptr;
+    NV_ENC_INPUT_PTR inputBuf = nullptr;
+    NV_ENC_OUTPUT_PTR bitstreamBuf = nullptr;
+    bool ownsCtx = false;
+    CUcontext cuCtx = nullptr;
 
-bool probeNvenc(int dev) {
-    cudaDeviceProp prop{};
-    if (cudaGetDeviceProperties(&prop, dev) != cudaSuccess)
-        return false;
-    return prop.major >= 6 && prop.integrated;
-}
+    ~NvencSession() { cleanup(); }
 
-double encodePass(int dev, int w, int h) {
-    if (w > 7680 || h > 4320)
-        return 0.0;
+    void cleanup() {
+        if (session && api.nvEncDestroyInputBuffer && api.nvEncDestroyBitstreamBuffer) {
+            if (inputBuf) api.nvEncDestroyInputBuffer(session, inputBuf);
+            if (bitstreamBuf) api.nvEncDestroyBitstreamBuffer(session, bitstreamBuf);
+        }
+        if (session && api.nvEncDestroyEncoder) {
+            api.nvEncDestroyEncoder(session);
+        }
+        session = nullptr;
+        inputBuf = nullptr;
+        bitstreamBuf = nullptr;
+        if (ownsCtx && cuCtx) {
+            cuCtxDestroy(cuCtx);
+            cuCtx = nullptr;
+        }
+    }
 
-    cudaSetDevice(dev);
-    size_t frameBytes = static_cast<size_t>(w) * h * 3ULL / 2ULL;
+    bool init(int dev, int w, int h, const GUID& codecGuid) {
+        memset(&api, 0, sizeof(api));
+        api.version = NV_ENCODE_API_FUNCTION_LIST_VER;
+        if (NvEncodeAPICreateInstance(&api) != NV_ENC_SUCCESS) {
+            return false;
+        }
 
-    unsigned char *dIn = nullptr, *dOut = nullptr;
-    chk(cudaMalloc(&dIn, frameBytes), "encode_alloc_in");
-    chk(cudaMalloc(&dOut, frameBytes), "encode_alloc_out");
-    chk(cudaMemset(dIn, 0x80, frameBytes), "encode_memset");
+        cudaSetDevice(dev);
+        cudaFree(0);
+        CUcontext ctx = nullptr;
+        CUresult res = cuCtxGetCurrent(&ctx);
+        if (res != CUDA_SUCCESS || ctx == nullptr) {
+            cuInit(0);
+            CUdevice cuDev;
+            cuDeviceGet(&cuDev, dev);
+            CUctxCreateParams params{};
+            cuCtxCreate(&ctx, &params, 0, cuDev);
+            cuCtxSetCurrent(ctx);
+        }
+        cuCtx = ctx;
+        ownsCtx = ownsCtx;
 
-    chk(cudaDeviceSynchronize(), "encode_sync_pre");
-    auto t0 = std::chrono::steady_clock::now();
-    chk(cudaMemcpy(dOut, dIn, frameBytes, cudaMemcpyDefault), "encode_memcpy");
-    chk(cudaDeviceSynchronize(), "encode_sync_post");
-    auto t1 = std::chrono::steady_clock::now();
+        NV_ENC_OPEN_ENCODE_SESSION_EX_PARAMS openParams{};
+        openParams.version = NV_ENC_OPEN_ENCODE_SESSION_EX_PARAMS_VER;
+        openParams.deviceType = NV_ENC_DEVICE_TYPE_CUDA;
+        openParams.device = cuCtx;
+        openParams.apiVersion = NVENCAPI_VERSION;
 
-    chk(cudaFree(dIn), "encode_free_in");
-    chk(cudaFree(dOut), "encode_free_out");
+        NVENCSTATUS status = api.nvEncOpenEncodeSessionEx(&openParams, &session);
+        FILE* dbg = fopen("/tmp/nvenc_debug.log", "a");
+        fprintf(dbg, "h264: nvEncOpenSession status=%d session=%p\n", status, session);
+        if (status != NV_ENC_SUCCESS) {
+            cleanup();
+            fclose(dbg);
+            return false;
+        }
 
-    double sec = std::chrono::duration<double>(t1 - t0).count();
-    if (sec <= 0.0)
-        return std::numeric_limits<double>::max();
-    return 1.0 / sec;
-}
+        NV_ENC_PRESET_CONFIG presetConfig{};
+        presetConfig.version = NV_ENC_PRESET_CONFIG_VER;
+        presetConfig.presetCfg.version = NV_ENC_CONFIG_VER;
+        status = api.nvEncGetEncodePresetConfigEx(session, codecGuid,
+            NV_ENC_PRESET_P2_GUID, NV_ENC_TUNING_INFO_LOW_LATENCY, &presetConfig);
+        fprintf(dbg, "h264: nvEncGetPresetConfig status=%d\n", status);
+        if (status != NV_ENC_SUCCESS) {
+            cleanup();
+            fclose(dbg);
+            return false;
+        }
 
-double medianOf(std::vector<double>& v) {
-    int n = static_cast<int>(v.size());
-    if (n == 0) return 0.0;
-    if (n % 2 == 1) return v[n / 2];
-    return (v[n / 2 - 1] + v[n / 2]) / 2.0;
-}
+        presetConfig.presetCfg.rcParams.rateControlMode = NV_ENC_PARAMS_RC_CONSTQP;
+        presetConfig.presetCfg.rcParams.constQP.qpIntra = 24;
+        presetConfig.presetCfg.rcParams.constQP.qpInterP = 24;
+        presetConfig.presetCfg.rcParams.constQP.qpInterB = 24;
 
-double pAt(std::vector<double>& v, double p) {
-    int n = static_cast<int>(v.size());
-    if (n == 0) return 0.0;
-    if (n == 1) return v[0];
-    double rank = p * (n - 1);
-    int lo = static_cast<int>(std::floor(rank));
-    int hi = static_cast<int>(std::ceil(rank));
-    double frac = rank - lo;
-    if (hi >= n) return v.back();
-    return v[lo] * (1.0 - frac) + v[hi] * frac;
-}
+        NV_ENC_INITIALIZE_PARAMS initParams{};
+        initParams.version = NV_ENC_INITIALIZE_PARAMS_VER;
+        initParams.encodeGUID = codecGuid;
+        initParams.presetGUID = NV_ENC_PRESET_P2_GUID;
+        initParams.tuningInfo = NV_ENC_TUNING_INFO_LOW_LATENCY;
+        initParams.encodeWidth = w;
+        initParams.encodeHeight = h;
+        initParams.darWidth = w;
+        initParams.darHeight = h;
+        initParams.frameRateNum = 60;
+        initParams.frameRateDen = 1;
+        initParams.enablePTD = 1;
+        initParams.bufferFormat = NV_ENC_BUFFER_FORMAT_NV12;
+        initParams.encodeConfig = &presetConfig.presetCfg;
 
-struct Case {
-    std::string label;
-    int w, h, fps;
+        status = api.nvEncInitializeEncoder(session, &initParams);
+        fprintf(dbg, "h264: nvEncInitializeEncoder status=%d\n", status);
+        if (status != NV_ENC_SUCCESS) {
+            cleanup();
+            fclose(dbg);
+            return false;
+        }
+
+        NV_ENC_CREATE_INPUT_BUFFER createIn{};
+        createIn.version = NV_ENC_CREATE_INPUT_BUFFER_VER;
+        createIn.width = w;
+        createIn.height = h;
+        createIn.bufferFmt = NV_ENC_BUFFER_FORMAT_NV12;
+        status = api.nvEncCreateInputBuffer(session, &createIn);
+        fprintf(dbg, "h264: nvEncCreateInputBuffer status=%d\n", status);
+        if (status != NV_ENC_SUCCESS) {
+            cleanup();
+            fclose(dbg);
+            return false;
+        }
+        inputBuf = createIn.inputBuffer;
+
+        // Fill input buffer with NV12 data (Y=128, UV=128 — flat gray)
+        NV_ENC_LOCK_INPUT_BUFFER lockIn{};
+        lockIn.version = NV_ENC_LOCK_INPUT_BUFFER_VER;
+        lockIn.inputBuffer = inputBuf;
+        status = api.nvEncLockInputBuffer(session, &lockIn);
+        if (status == NV_ENC_SUCCESS) {
+            uint8_t* ptr = static_cast<uint8_t*>(lockIn.bufferDataPtr);
+            int pitch = lockIn.pitch;
+            for (int y = 0; y < h; ++y) {
+                memset(ptr + y * pitch, 0x80, w);
+            }
+            // UV plane (half height, interleaved, same pitch)
+            int uvBase = pitch * h;
+            for (int y = 0; y < h / 2; ++y) {
+                memset(ptr + uvBase + y * pitch, 0x80, w);
+            }
+            api.nvEncUnlockInputBuffer(session, inputBuf);
+        }
+
+        NV_ENC_CREATE_BITSTREAM_BUFFER createBs{};
+        createBs.version = NV_ENC_CREATE_BITSTREAM_BUFFER_VER;
+        status = api.nvEncCreateBitstreamBuffer(session, &createBs);
+        if (status != NV_ENC_SUCCESS) {
+            cleanup();
+            return false;
+        }
+        bitstreamBuf = createBs.bitstreamBuffer;
+
+        return true;
+    }
+
+    bool encodeFrame() {
+        NV_ENC_PIC_PARAMS picParams{};
+        picParams.version = NV_ENC_PIC_PARAMS_VER;
+        picParams.inputBuffer = inputBuf;
+        picParams.pictureStruct = NV_ENC_PIC_STRUCT_FRAME;
+        picParams.outputBitstream = bitstreamBuf;
+        picParams.frameIdx = 0;
+        picParams.encodePicFlags = NV_ENC_PIC_FLAG_FORCEIDR;
+
+        return api.nvEncEncodePicture(session, &picParams) == NV_ENC_SUCCESS;
+    }
 };
 
-}
-
-std::vector<BenchResult> runH264EncodeBench(int device, int width, int height, int targetFps, int iterations) {
+std::vector<BenchResult> runEncodeBench(int device, int width, int height, int targetFps, int iterations,
+                                         const GUID& codecGuid, const char* codecStr) {
     std::vector<BenchResult> results;
 
-    if (width <= 0 || height <= 0 || iterations <= 0)
-        return results;
+    if (width <= 0 || height <= 0 || iterations <= 0) return results;
 
-    if (width > 7680 || height > 4320) {
-        BenchResult r{};
-        r.suite_name = "h264_encode";
-        r.test_name  = "dimension_exceeded";
-        r.unit       = "fps";
-        r.metadata["codec"] = "h264";
-        r.metadata["resolution"] = std::to_string(width) + "x" + std::to_string(height);
-        r.metadata["encoder"] = "NVENC";
-        r.metadata["stub_reason"] = "resolution exceeds 7680x4320";
-        r.params_json = "{\"error\":\"resolution exceeds 7680x4320\"}";
-        results.push_back(r);
-        return results;
-    }
+    struct Case {
+        std::string label;
+        int w, h;
+    };
 
-    int dCount = 0;
-    if (cudaGetDeviceCount(&dCount) != cudaSuccess || device >= dCount) {
-        BenchResult r{};
-        r.suite_name = "h264_encode";
-        r.test_name  = "device_unavailable";
-        r.unit       = "fps";
-        r.metadata["codec"] = "h264";
-        r.metadata["encoder"] = "NVENC";
-        r.metadata["stub_reason"] = "cuda device unavailable";
-        r.params_json = "{\"error\":\"cuda device unavailable\"}";
-        results.push_back(r);
-        return results;
-    }
-
-    bool nvenc = probeNvenc(device);
     std::vector<Case> cases;
-    cases.push_back({std::to_string(width) + "x" + std::to_string(height), width, height, targetFps});
+    cases.push_back({std::to_string(width) + "x" + std::to_string(height), width, height});
     if (width != 1920 || height != 1080)
-        cases.push_back({"1080p", 1920, 1080, targetFps});
+        cases.push_back({"1080p", 1920, 1080});
     if (width != 1280 || height != 720)
-        cases.push_back({"720p", 1280, 720, targetFps});
+        cases.push_back({"720p", 1280, 720});
     if (width != 3840 || height != 2160)
-        cases.push_back({"4K", 3840, 2160, targetFps});
+        cases.push_back({"4K", 3840, 2160});
 
     for (const auto& c : cases) {
-        std::vector<double> vals;
-        vals.reserve(iterations);
-        for (int i = 0; i < iterations; ++i)
-            vals.push_back(encodePass(device, c.w, c.h));
+        if (c.w > 7680 || c.h > 4320) {
+            BenchResult r{};
+            r.suite_name = codecStr;
+            r.test_name = c.label;
+            r.unit = "fps";
+            r.sample_count = 0;
+            r.metadata["codec"] = codecStr;
+            r.metadata["encoder"] = "NVENC";
+            r.metadata["stub"] = "true";
+            r.metadata["stub_reason"] = "resolution exceeds limit";
+            r.params_json = "{\"error\":\"resolution exceeds limit\"}";
+            results.push_back(r);
+            continue;
+        }
 
-        std::sort(vals.begin(), vals.end());
-        int n = static_cast<int>(vals.size());
+        NvencSession enc;
+        try {
+            if (!enc.init(device, c.w, c.h, codecGuid)) {
+                BenchResult r{};
+                r.suite_name = codecStr;
+                r.test_name = c.label;
+                r.unit = "fps";
+                r.sample_count = 0;
+                r.metadata["codec"] = codecStr;
+                r.metadata["encoder"] = "NVENC";
+                r.metadata["stub"] = "true";
+                r.metadata["stub_reason"] = "NVENC session creation failed";
+                r.params_json = "{\"error\":\"NVENC session creation failed\"}";
+                results.push_back(r);
+                continue;
+            }
+        } catch (const std::exception& e) {
+            BenchResult r{};
+            r.suite_name = codecStr;
+            r.test_name = c.label;
+            r.unit = "fps";
+            r.sample_count = 0;
+            r.metadata["codec"] = codecStr;
+            r.metadata["encoder"] = "NVENC";
+            r.metadata["stub"] = "true";
+            r.metadata["stub_reason"] = std::string("init error: ") + e.what();
+            r.params_json = std::string("{\"error\":\"") + e.what() + "\"}";
+            results.push_back(r);
+            continue;
+        }
+
+        for (int w = 0; w < 3; ++w) {
+            enc.encodeFrame();
+        }
+
+        constexpr int framesPerSample = 10;
+        std::vector<double> fpsVals;
+        fpsVals.reserve(iterations);
+
+        for (int i = 0; i < iterations; ++i) {
+            cudaEvent_t evS, evE;
+            if (cudaEventCreate(&evS) != cudaSuccess || cudaEventCreate(&evE) != cudaSuccess) {
+                break;
+            }
+
+            cudaEventRecord(evS);
+            cudaDeviceSynchronize();
+            for (int f = 0; f < framesPerSample; ++f) {
+                if (!enc.encodeFrame()) {
+                    cudaEventDestroy(evS);
+                    cudaEventDestroy(evE);
+                    break;
+                }
+            }
+            cudaDeviceSynchronize();
+            cudaEventRecord(evE);
+            cudaEventSynchronize(evE);
+
+            float ms = 0;
+            cudaEventElapsedTime(&ms, evS, evE);
+            cudaEventDestroy(evS);
+            cudaEventDestroy(evE);
+
+            double fps = (framesPerSample * 1000.0) / ms;
+            fpsVals.push_back(fps);
+        }
+
+        if (fpsVals.empty()) {
+            BenchResult r{};
+            r.suite_name = codecStr;
+            r.test_name = c.label;
+            r.unit = "fps";
+            r.sample_count = 0;
+            r.metadata["codec"] = codecStr;
+            r.metadata["encoder"] = "NVENC";
+            r.metadata["stub"] = "true";
+            r.metadata["stub_reason"] = "encode failed";
+            r.params_json = "{\"error\":\"encode failed\"}";
+            results.push_back(r);
+            continue;
+        }
+
+        std::sort(fpsVals.begin(), fpsVals.end());
+        int n = static_cast<int>(fpsVals.size());
         double sum = 0.0;
-        for (double v : vals) sum += v;
+        for (double v : fpsVals) sum += v;
         double mean = sum / n;
         double sq = 0.0;
-        for (double v : vals) sq += (v - mean) * (v - mean);
+        for (double v : fpsVals) sq += (v - mean) * (v - mean);
 
         BenchResult r{};
-        r.suite_name   = "h264_encode";
-        r.test_name    = c.label;
-        r.unit         = "fps";
-        r.mean         = mean;
-        r.median       = medianOf(vals);
-        r.stddev       = std::sqrt(sq / n);
-        r.min_val      = vals.front();
-        r.max_val      = vals.back();
-        r.p95          = pAt(vals, 0.95);
-        r.p99          = pAt(vals, 0.99);
+        r.suite_name = codecStr;
+        r.test_name = c.label;
+        r.unit = "fps";
+        r.mean = mean;
+        r.median = (n % 2 == 1) ? fpsVals[n / 2] : (fpsVals[n / 2 - 1] + fpsVals[n / 2]) / 2.0;
+        r.stddev = std::sqrt(sq / n);
+        r.min_val = fpsVals.front();
+        r.max_val = fpsVals.back();
         r.sample_count = n;
-        r.warmup_count = 0;
-        {
-            std::ostringstream ps;
-            ps << "{\"width\":" << c.w << ",\"height\":" << c.h
-               << ",\"target_fps\":" << c.fps
-               << ",\"nvenc_available\":" << (nvenc ? "true" : "false") << "}";
-            r.params_json = ps.str();
-        }
-        r.metadata["codec"] = "h264";
-        r.metadata["resolution"] = std::to_string(c.w) + "x" + std::to_string(c.h);
+        r.warmup_count = 3;
+
+        std::ostringstream ps;
+        ps << "{\"width\":" << c.w << ",\"height\":" << c.h
+           << ",\"target_fps\":" << targetFps
+           << ",\"frames_per_sample\":" << framesPerSample
+           << ",\"codec\":\"" << codecStr << "\"}";
+        r.params_json = ps.str();
+        r.metadata["codec"] = codecStr;
         r.metadata["encoder"] = "NVENC";
-        results.push_back(std::move(r));
+        r.metadata["resolution"] = std::to_string(c.w) + "x" + std::to_string(c.h);
+        results.push_back(r);
     }
 
     return results;
 }
 
-} // anonymous namespace
+}
+
+std::vector<BenchResult> runH264EncodeBench(int device, int width, int height, int targetFps, int iterations) {
+    return runEncodeBench(device, width, height, targetFps, iterations, NV_ENC_CODEC_H264_GUID, "h264_encode");
+}
+
+}
 
 BENCH_REGISTER_SUITE(h264_encode, "NVENC H.264 encoding",
-    [](deusridet::bench::BenchRunner& runner) -> std::vector<deusridet::bench::BenchResult> {
+    [](deusridet::bench::BenchRunner&) -> std::vector<deusridet::bench::BenchResult> {
         return deusridet::bench::runH264EncodeBench(0, 1920, 1080, 60, 10);
     });

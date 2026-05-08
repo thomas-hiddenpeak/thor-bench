@@ -1,19 +1,28 @@
 #include <chrono>
 #include <cstdlib>
 #include <ctime>
+#include <filesystem>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
 #include <string>
 #include <vector>
 #include <sys/utsname.h>
+#include <unistd.h>
+#include <libgen.h>
+#include <string.h>
+#include <stdlib.h>
+#include <sys/stat.h>
 
 #include <cuda_runtime.h>
 
-#include "bench_suites.h"
+#include "bench_csv_formatter.h"
 #include "bench_json_serializer.h"
+#include "bench_suites.h"
 #include "bench_text_formatter.h"
 #include "cupti_profiler.h"
+#include "power_monitor.h"
+#include "sweep_runner.h"
 #include "communis/cuda_check.h"
 
 using namespace deusridet::bench;
@@ -34,13 +43,17 @@ static void print_usage(const char* prog) {
               << "  --warmup N        Number of warmup runs per test (default: 3)\n"
               << "  --timeout SEC     Per-suite timeout in seconds (default: 300)\n"
               << "  --device N        CUDA device index (default: 0)\n"
-              << "  --cupti           Enable CUPTI activity profiling\n"
-              << "  --help            Show this message\n";
+               << "  --cupti           Enable CUPTI activity profiling\n"
+               << "  --sweep           Run in sweep mode (parameter matrix testing)\n"
+               << "  --csv             Output sweep results as CSV (requires --sweep)\n"
+               << "  --help            Show this message\n";
 }
 
 struct CliArgs {
     bool     json         = false;
     bool     cupti        = false;
+    bool     sweep        = false;
+    bool     csv          = false;
     std::vector<std::string> suites;
     int      iterations   = 10;
     int      warmup       = 3;
@@ -157,11 +170,21 @@ static CliArgs parse_args(int argc, char* argv[]) {
                 std::cerr << "Error: invalid --device value: " << argv[i] << std::endl;
                 exit(EXIT_PARAM_ERROR);
             }
+        } else if (arg == "--sweep") {
+            args.sweep = true;
+        } else if (arg == "--csv") {
+            args.csv = true;
         } else {
             std::cerr << "Error: unrecognized option: " << arg << std::endl;
             print_usage(argv[0]);
             exit(EXIT_PARAM_ERROR);
         }
+    }
+
+    if (args.sweep && args.cupti) {
+        std::cerr << "Error: --sweep and --cupti are mutually exclusive" << std::endl;
+        print_usage(argv[0]);
+        exit(EXIT_PARAM_ERROR);
     }
 
     return args;
@@ -191,6 +214,54 @@ static std::string get_timestamp() {
 // ── Main ──────────────────────────────────────────────────────────────────
 int main(int argc, char* argv[]) {
     CliArgs args = parse_args(argc, argv);
+
+    // ── Sweep mode (before CUDA device validation) ──
+    if (args.sweep) {
+        auto& sweepRegistry = BenchSuiteRegistry::instance();
+        const auto& sweepSuites = args.suites.empty()
+            ? sweepRegistry.allSweepSuites()
+            : sweepRegistry.filteredSweepSuites(args.suites);
+
+        if (sweepSuites.empty()) {
+            std::cerr << "Error: no sweep suites registered (or none matched filter)" << std::endl;
+            return EXIT_PARAM_ERROR;
+        }
+
+        std::cerr << "[sweep] Mode: sweep | Suites: " << sweepSuites.size()
+                  << " | Device: " << args.device << "\n";
+
+        PowerMonitor powerMonitor;
+        powerMonitor.init();
+
+        if (args.csv) {
+            std::filesystem::create_directories("sweep_results");
+        }
+
+        SweepRunner sweepRunner;
+        sweepRunner.warmup(args.warmup);
+        sweepRunner.iterations(args.iterations);
+        sweepRunner.timeout(std::chrono::milliseconds(args.timeout_sec * 1000));
+
+        auto reports = sweepRunner.runMultiple(sweepSuites, args.device);
+
+        if (args.csv) {
+            for (const auto& report : reports) {
+                std::string path = "sweep_results/" + report.suite_name + ".csv";
+                writeCsvFile(path, report);
+                std::cerr << "[csv] Written: " << path << "\n";
+            }
+        }
+
+        if (args.json) {
+            std::cout << serializeSweepJson(reports, get_hostname()) << std::endl;
+        } else {
+            std::cout << formatText(reports) << std::endl;
+        }
+
+        powerMonitor.shutdown();
+
+        return EXIT_SUCCESS_CODE;
+    }
 
     // ── CUDA device validation ──
     int deviceCount = 0;
@@ -315,17 +386,33 @@ int main(int argc, char* argv[]) {
             CuptiProfiler::instance().stopRange();
         }
 
-        // ALWAYS synchronize to drain any async errors from the previous suite.
-        // NOTE: cudaErrorIllegalInstruction from tcgen05 stub suites is expected
-        // on Thor DevKit (tcgen05 unsupported by current driver). Tolerate it.
-        // cudaGetLastError() only checks the last API call — async kernel errors
-        // (like IllegalInstruction) only surface on synchronize.
         cudaError_t syncErr = cudaDeviceSynchronize();
-        if (syncErr != cudaSuccess && syncErr != cudaErrorIllegalInstruction) {
+        if (syncErr == cudaErrorIllegalInstruction) {
+            // CRITICAL: IllegalInstruction (from tcgen05) poisons the CUDA context.
+            // cudaDeviceReset() destroys and recreates the context so subsequent suites
+            // start fresh. On Tegra, this is the ONLY recovery mechanism.
+            std::cerr << "CUDA(IllegalInstruction) after suite " << suite.name
+                       << " — resetting device context\n";
+            cudaDeviceReset();
+            // Tegra requires a brief pause + retry after cudaDeviceReset before
+            // the device is available again.
+            {
+                int retry = 0;
+                cudaError_t e;
+                do {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+                    e = cudaSetDevice(args.device);
+                } while (e != cudaSuccess && ++retry < 10);
+                if (e != cudaSuccess) {
+                    std::cerr << "Failed to reinitialize CUDA device after reset: "
+                              << cudaGetErrorString(e) << "\n";
+                    return 1;
+                }
+            }
+        } else if (syncErr != cudaSuccess) {
             std::cerr << "CUDA error on final_sync: " << cudaGetErrorString(syncErr) << std::endl;
             return 1;
         }
-        // Drain host-side error queue after sync.
         cudaGetLastError();
 
         if (!args.json) std::cout << std::endl;

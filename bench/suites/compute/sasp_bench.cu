@@ -3,6 +3,8 @@
 #include "bench_suites.h"
 #include "bench_peaks.h"
 #include "bench_stats.h"
+#include "sweep_schema.h"
+#include "power_monitor.h"
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
 #include <cuda_fp8.h>
@@ -10,6 +12,9 @@
 #include <cmath>
 #include <sstream>
 #include <stdexcept>
+#include <chrono>
+#include <ctime>
+#include <iomanip>
 
 namespace deusridet::bench {
 
@@ -211,26 +216,10 @@ __global__ void fp8SparseProbeKernel() {
 
 static bool fp8SparseSupported(int device) {
     chk(cudaSetDevice(device), "probe_dev");
-    int major = 0, minor = 0;
+    int major = 0;
     chk(cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, device), "major");
-    chk(cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, device), "minor");
-    if (major < 11) return false;
-
-    cudaStream_t str;
-    chk(cudaStreamCreate(&str), "probe_stream");
-    fp8SparseProbeKernel<<<1, 32, 0, str>>>();
-    cudaError_t e = cudaStreamSynchronize(str);
-    chk(cudaStreamDestroy(str), "probe_stream_destroy");
-    if (e != cudaSuccess) {
-        cudaGetLastError(); // drain IllegalInstruction from probe
-        return false;
-    }
-    e = cudaGetLastError();
-    if (e != cudaSuccess) {
-        cudaGetLastError(); // drain
-        return false;
-    }
-    return true;
+    // tcgen05.mma.sp kind::f8f6f4 IllegalInstruction poisons CUDA context on driver 595.58.03.
+    return false;
 }
 
 // Tile dimensions: 16x16x16 per warp (same as INT8 TC sparse kernel).
@@ -589,6 +578,16 @@ BenchResult measureFP8Sparse(int device, int matDim, int iterations) {
 
 } // anonymous namespace
 
+static std::string getSweepTimestamp() {
+    auto now = std::chrono::system_clock::now();
+    auto time_t_now = std::chrono::system_clock::to_time_t(now);
+    struct tm tm_buf{};
+    localtime_r(&time_t_now, &tm_buf);
+    std::ostringstream oss;
+    oss << std::put_time(&tm_buf, "%Y-%m-%dT%H:%M:%S");
+    return oss.str();
+}
+
 std::vector<BenchResult> runSASPBench(int device, int matDim, int iterations) {
     std::vector<BenchResult> results;
 
@@ -629,6 +628,10 @@ std::vector<BenchResult> runSASPBench(int device, int matDim, int iterations) {
             results.push_back(measureFP8Sparse(device, matDim, iterations));
         }
     } catch (const std::exception& ex) {
+        // CRITICAL: tcgen05 IllegalInstruction poisons device context.
+        // MUST synchronize to drain error BEFORE any subsequent CUDA call.
+        cudaDeviceSynchronize();
+        cudaGetLastError();
         BenchResult r{};
         r.suite_name = "sasp";
         r.test_name  = "sasp_fp8_sparse";
@@ -647,7 +650,53 @@ std::vector<BenchResult> runSASPBench(int device, int matDim, int iterations) {
 
 } // namespace deusridet::bench
 
-BENCH_REGISTER_SUITE(sasp, "FP8 dense matmul + 2:4 structured sparse (scalar kernel, no Tensor Core)",
-    [](deusridet::bench::BenchRunner&) -> std::vector<deusridet::bench::BenchResult> {
-        return deusridet::bench::runSASPBench(0, 512, 10);
+using deusridet::bench::SweepReport;
+using deusridet::bench::SweepResult;
+using deusridet::bench::PowerMonitor;
+using deusridet::bench::getSweepTimestamp;
+
+BENCH_REGISTER_SWEEP_SUITE(sasp, "FP8 dense matmul + 2:4 structured sparse (scalar kernel, no Tensor Core)",
+    [](deusridet::bench::BenchRunner& runner, int device) -> std::vector<deusridet::bench::SweepReport> {
+        SweepReport report;
+        report.suite_name = "sasp";
+        report.description = "FP8 dense matmul + 2:4 structured sparse";
+        report.param_names.push_back("mat_dim");
+
+        PowerMonitor pm;
+        pm.init();
+
+        for (int matDim : std::vector<int>{128, 256, 512}) {
+            SweepResult point;
+            point.suite_name = "sasp";
+            point.test_name = "sasp_fp8_dense/sasp_fp8_sparse";
+            {
+                std::ostringstream p;
+                p << "{\"mat_dim\":" << matDim << "}";
+                point.params_json = p.str();
+            }
+            pm.markStart();
+            try {
+                auto benchResults = deusridet::bench::runSASPBench(device, matDim, 10);
+                if (!benchResults.empty()) {
+                    point.result = benchResults[0];
+                }
+            } catch (const std::exception& e) {
+                point.error_message = e.what();
+            }
+            point.power_watts = pm.markEnd();
+            point.timestamp = getSweepTimestamp();
+            report.points.push_back(point);
+        }
+
+        pm.shutdown();
+
+        report.total_points   = static_cast<int>(report.points.size());
+        report.success_points = 0;
+        report.error_points   = 0;
+        for (const auto& pt : report.points) {
+            if (pt.error_message.has_value()) ++report.error_points;
+            else ++report.success_points;
+        }
+
+        return {report};
     });
