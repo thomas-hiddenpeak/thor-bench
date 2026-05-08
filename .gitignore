@@ -1,6 +1,7 @@
 # Build
 build/
 build_audit/
+build2/
 
 # IDE
 .vscode/
