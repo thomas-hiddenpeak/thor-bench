@@ -311,5 +311,5 @@ std::vector<BenchResult> runMultiStreamBench(int device, int bufferSize, int ite
 
 BENCH_REGISTER_SUITE(multi_stream, "Multi-stream memory concurrency and overlap",
     [](deusridet::bench::BenchRunner&) -> std::vector<deusridet::bench::BenchResult> {
-        return deusridet::bench::runMultiStreamBench(0, 1048576, 10);
+        return deusridet::bench::runMultiStreamBench(0, 1048576, 5);
     });

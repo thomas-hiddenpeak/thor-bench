@@ -268,5 +268,5 @@ std::vector<BenchResult> runThermalThrottleBench(int device, int durationSec, in
 
 BENCH_REGISTER_SUITE(thermal_throttle, "Sustained performance under thermal constraints",
     [](deusridet::bench::BenchRunner&) -> std::vector<deusridet::bench::BenchResult> {
-        return deusridet::bench::runThermalThrottleBench(0, 15, 1);
+        return deusridet::bench::runThermalThrottleBench(0, 10, 1);
     });
