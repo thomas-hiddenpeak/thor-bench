@@ -63,14 +63,14 @@ All suites report `peak_pct` — percentage of T5000 theoretical maximum. See [A
 | `memory` | LPDDR5X bandwidth | GB/s (read/write/copy) + shared mem crossbar | ✅ |
 | `sm_compute` | SM FP32/FP64 | GFLOP/s (FMA + register pressure) | ✅ |
 | `tensor` | FP16/BF16 WMMA (tcgen05.mma) | TFLOP/s | ✅ |
-| `sasp` | FP8 dense + 2:4 sparse | TFLOP/s | ✅ FP8 dense (scalar); ⛔ FP8 sparse (tcgen05 probe fails) |
+| `sasp` | FP8 dense + 2:4 sparse | TFLOP/s | ✅ FP8 dense (scalar); ⏳ FP8 sparse (probe bug) |
 | `fp4` | NVFP4 dense/sparse GEMM | TFLOP/s (via tcgen05.mma inline PTX) | ✅ Dense + Sparse |
-| `fp8_scalar` | Scalar FP8 GEMM (no Tensor Core) | TFLOP/s | ✅ Dense; ⛔ Sparse (tcgen05 probe fails) |
-| `int8_scalar` | Scalar INT8 GEMM (no Tensor Core) | TOP/s | ✅ Dense; ⛔ Sparse (tcgen05 probe fails) |
-| `tmem` | TCGen05 TMEM bandwidth | GB/s | ⛔ stub (tcgen05 probe fails) |
+| `fp8_scalar` | Scalar FP8 GEMM (no Tensor Core) | TFLOP/s | ✅ Dense; ⏳ Sparse (probe bug) |
+| `int8_scalar` | Scalar INT8 GEMM (no Tensor Core) | TOP/s | ✅ Dense; ⏳ Sparse (probe bug) |
+| `tmem` | TCGen05 TMEM bandwidth | GB/s | ⏳ stub (probe bug) |
 | `cublas` | cuBLAS SGEMM/DGEMM | TFLOP/s | ✅ SGEMM/DGEMM/strided-batched |
 | `fp64_tensor` | DMMA FP64 (mma.sync.aligned) | TFLOP/s | ✅ |
-| `int8_tensor` | INT8 Tensor Core (tcgen05.mma.kind::i8) | TOP/s | ⛔ stub (IllegalInstruction on driver 595.58.03) |
+| `int8_tensor` | INT8 Tensor Core (tcgen05.mma.kind::i8) | TOP/s | ⏳ stub (probe bug) |
 | `mig` | MIG partitioning | TFLOP/s | ✅ Full GPU; ⛔ MIG partition (stub, DevKit) |
 
 ### Memory
@@ -116,7 +116,7 @@ All suites report `peak_pct` — percentage of T5000 theoretical maximum. See [A
 | Suite | Domain | Metrics | Status |
 |-------|--------|---------|--------|
 | `host_device_transfer` | Host↔Device transfer | GB/s (integrated SoC memory) | ✅ |
-| `thermal_throttle` | Sustained FP32 under thermal | GFLOP/s (15s run) | ✅ |
+| `thermal_throttle` | Sustained FP32 under thermal | GFLOP/s (10s run) | ✅ |
 | `multi_stream` | Multi-stream copy | GB/s (concurrent streams) | ✅ |
 | `allocator_latency` | cudaMalloc/cudaFree latency | µs median + allocs/s | ✅ |
 
@@ -179,7 +179,7 @@ Captured on Jetson AGX Thor DevKit (T5000), driver 595.58.03, CUDA 13.0, Video C
 | FP64 WMMA Dense | 0.09 TFLOP/s | 70.0% |
 | FP8 Scalar Dense | 0.22 TFLOP/s | 0.04% |
 | INT8 Scalar Dense | 0.22 TOP/s | 2.7% |
-| FP32 Sustained (15s thermal) | 3.66 TFLOP/s | 45.4% |
+| FP32 Sustained (10s thermal) | 3.66 TFLOP/s | 45.4% |
 | FP32 Thermal sustain rate | **101.5%** | No throttling |
 
 ### Memory Bandwidth
@@ -228,18 +228,20 @@ Captured on Jetson AGX Thor DevKit (T5000), driver 595.58.03, CUDA 13.0, Video C
 | ARM NEON FP32 | 9.99 GFLOP/s |
 | ARM NEON FP16 | 13.53 GFLOP/s |
 
-## Stubs & Limitations
+## Stubs & Pending Work
 
-| Suite | Reason |
+These suites are stubbed **NOT** due to hardware limitations — Thor T5000 supports all of them. They are stubbed because probe kernels have bugs that cause IllegalInstruction and poison the CUDA context.
+
+| Suite | Status |
 |-------|--------|
-| `tmem` (4 tests) | `tcgen05.alloc/mma` probe kernel fails with IllegalInstruction — stubbed to prevent context poisoning. |
-| `sasp` FP8 sparse | `kind::f8f6f4` probe kernel fails with IllegalInstruction — stubbed. |
-| `fp8_scalar` sparse | `tcgen05.mma.sp` probe kernel fails with IllegalInstruction — stubbed. |
-| `int8_scalar` sparse | `kind::i8` probe kernel fails with IllegalInstruction — stubbed. |
-| `int8_tensor` | `kind::i8` probe kernel fails with IllegalInstruction — stubbed. |
-| NVDEC (H.264/HEVC/AV1) | Requires real bitstream files for decoding. Hardware capability detected but no reference streams included. |
-| NVJPEG (encode/decode) | NVJPEG is not available on Tegra. |
-| MIG partitioning | Requires `nvidia-smi mig` setup — not available on DevKit firmware. |
+| `tmem` (4 tests) | ⏳ Hardware supports TMEM. Probe kernel (`tcgen05.alloc/mma`) emits IllegalInstruction on driver 595.58.03 — needs proper scale factor setup (tcgen05.cp pipeline). |
+| `sasp` FP8 sparse | ⏳ Hardware supports FP8 sparse. `kind::f8f6f4` probe kernel emits IllegalInstruction — needs fix. |
+| `fp8_scalar` sparse | ⏳ Hardware supports FP8 sparse. `tcgen05.mma.sp` probe kernel emits IllegalInstruction — needs fix. |
+| `int8_scalar` sparse | ⏳ Hardware supports INT8 sparse. `kind::i8` probe kernel emits IllegalInstruction — needs fix. |
+| `int8_tensor` | ⏳ Hardware supports INT8 Tensor Core. `kind::i8` probe kernel emits IllegalInstruction — needs fix. |
+| NVDEC (H.264/HEVC/AV1) | ⏳ Hardware detected & capable. Needs real bitstream files for decoding. |
+| NVJPEG (encode/decode) | ⛔ NVJPEG is not available on Tegra — genuine platform gap. |
+| MIG partitioning | ⏳ Needs `nvidia-smi mig` setup — DevKit firmware limitation, not hardware. |
 
 ## License
 
