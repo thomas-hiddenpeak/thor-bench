@@ -357,6 +357,28 @@ int main(int argc, char* argv[]) {
             std::cout << "[" << suite.name << "] " << suite.description << std::endl;
         }
 
+        // Drain async errors from prior suites (non-blocking check only).
+        {
+            cudaError_t preSync = cudaGetLastError();
+            if (preSync != cudaSuccess) {
+                std::cerr << "CUDA(" << cudaGetErrorString(preSync) << ") before suite " << suite.name
+                          << " — resetting device context\n";
+                cudaDeviceReset();
+                {
+                    int retry = 0;
+                    cudaError_t e;
+                    do {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+                        e = cudaSetDevice(args.device);
+                    } while (e != cudaSuccess && ++retry < 10);
+                    if (e != cudaSuccess) {
+                        std::cerr << "Cannot recover before suite " << suite.name << " — stopping benchmark\n";
+                        break;
+                    }
+                }
+            }
+        }
+
         if (args.cupti) {
             CuptiProfiler::instance().startRange(suite.name.c_str());
         }
@@ -386,32 +408,65 @@ int main(int argc, char* argv[]) {
             CuptiProfiler::instance().stopRange();
         }
 
-        cudaError_t syncErr = cudaDeviceSynchronize();
-        if (syncErr == cudaErrorIllegalInstruction) {
-            // CRITICAL: IllegalInstruction (from tcgen05) poisons the CUDA context.
-            // cudaDeviceReset() destroys and recreates the context so subsequent suites
-            // start fresh. On Tegra, this is the ONLY recovery mechanism.
-            std::cerr << "CUDA(IllegalInstruction) after suite " << suite.name
-                       << " — resetting device context\n";
-            cudaDeviceReset();
-            // Tegra requires a brief pause + retry after cudaDeviceReset before
-            // the device is available again.
-            {
-                int retry = 0;
-                cudaError_t e;
-                do {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(200));
-                    e = cudaSetDevice(args.device);
-                } while (e != cudaSuccess && ++retry < 10);
-                if (e != cudaSuccess) {
-                    std::cerr << "Failed to reinitialize CUDA device after reset: "
-                              << cudaGetErrorString(e) << "\n";
-                    return 1;
+        // Use cudaEventRecord + polling loop to avoid blocking forever on async workstream errors.
+        cudaError_t syncErr = cudaSuccess;
+        {
+            cudaEvent_t syncEvent;
+            syncErr = cudaEventCreate(&syncEvent);
+            if (syncErr == cudaSuccess) {
+                cudaEventRecord(syncEvent);
+                auto start = std::chrono::steady_clock::now();
+                bool completed = false;
+                while (std::chrono::steady_clock::now() - start < std::chrono::seconds(30)) {
+                    cudaError_t queryErr = cudaEventQuery(syncEvent);
+                    if (queryErr == cudaSuccess) {
+                        completed = true;
+                        break;
+                    } else if (queryErr != cudaErrorNotReady) {
+                        syncErr = queryErr;
+                        completed = true;
+                        break;
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                }
+                if (!completed) {
+                    std::cerr << "[suite " << suite.name << "] cudaDeviceSynchronize() timed out (30s) — resetting context\n";
+                    cudaEventDestroy(syncEvent);
+                    cudaDeviceReset();
+                    {
+                        int retry = 0;
+                        cudaError_t e;
+                        do {
+                            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+                            e = cudaSetDevice(args.device);
+                        } while (e != cudaSuccess && ++retry < 10);
+                    }
+                    syncErr = cudaErrorUnknown;
+                } else {
+                    cudaEventDestroy(syncEvent);
                 }
             }
-        } else if (syncErr != cudaSuccess) {
-            std::cerr << "CUDA error on final_sync: " << cudaGetErrorString(syncErr) << std::endl;
-            return 1;
+        }
+        if (syncErr != cudaSuccess) {
+            std::cerr << "CUDA(" << cudaGetErrorString(syncErr) << ") after suite " << suite.name << "\n";
+            anyFailed = true;
+            // Only IllegalInstruction poisons context. Other async errors (ws) do not —
+            // cudaDeviceReset() would block forever on those.
+            if (syncErr == cudaErrorIllegalInstruction) {
+                cudaDeviceReset();
+                {
+                    int retry = 0;
+                    cudaError_t e;
+                    do {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+                        e = cudaSetDevice(args.device);
+                    } while (e != cudaSuccess && ++retry < 10);
+                    if (e != cudaSuccess) {
+                        std::cerr << "Cannot recover after IllegalInstruction — stopping benchmark\n";
+                        break;
+                    }
+                }
+            }
         }
         cudaGetLastError();
 

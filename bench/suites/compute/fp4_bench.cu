@@ -339,7 +339,11 @@ static bool nvfp4Supported(int device) {
     chk(cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, device), "major");
     chk(cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, device), "minor");
     // Thor = 11.0 (confirmed via runtime). Guard only for pre-Blackwell.
-    return major >= 11;
+    if (major < 11) return false;
+    // CRITICAL: kind::mxf4nvf4.block_scale.block16 triggers IllegalInstruction on driver 595.58.03.
+    // The probe kernel itself poisons the CUDA device context — cannot recover.
+    // Do NOT attempt a real probe here. Stub until a safe probe method is found.
+    return false;
 }
 
 // ── Measure FP4 NVFP4 Dense GEMM ────────────────────────────────────────────
