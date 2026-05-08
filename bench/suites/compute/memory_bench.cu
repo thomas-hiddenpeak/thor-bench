@@ -332,6 +332,11 @@ static std::string getSweepTimestamp() {
     return oss.str();
 }
 
+BENCH_REGISTER_SUITE(memory, "LPDDR5X memory bandwidth (read/write/copy)",
+    [](deusridet::bench::BenchRunner& runner) -> std::vector<deusridet::bench::BenchResult> {
+        return deusridet::bench::runMemoryBench(0, 128*1024*1024, 10);
+    });
+
 BENCH_REGISTER_SWEEP_SUITE(memory, "LPDDR5X memory bandwidth (read/write/copy)",
     [](deusridet::bench::BenchRunner& runner, int device) -> std::vector<deusridet::bench::SweepReport> {
         deusridet::bench::SweepReport report;

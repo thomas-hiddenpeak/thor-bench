@@ -474,6 +474,11 @@ std::string getSweepTimestamp() {
 
 } // namespace deusridet::bench
 
+BENCH_REGISTER_SUITE(cublas, "cuBLAS/cuBLASLt GEMM throughput (FP32/FP64)",
+    [](deusridet::bench::BenchRunner& runner) -> std::vector<deusridet::bench::BenchResult> {
+        return deusridet::bench::runCublasBench(0, 1024, 10);
+    });
+
 BENCH_REGISTER_SWEEP_SUITE(cublas, "cuBLAS/cuBLASLt GEMM throughput (FP32/FP64)",
     [](deusridet::bench::BenchRunner& runner, int device) -> std::vector<deusridet::bench::SweepReport> {
         deusridet::bench::SweepReport report;

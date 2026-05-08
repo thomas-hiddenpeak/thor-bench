@@ -229,6 +229,11 @@ static std::string getSweepTimestamp() {
     return oss.str();
 }
 
+BENCH_REGISTER_SUITE(tensor, "Tensor Core WMMA throughput (FP16/BF16)",
+    [](deusridet::bench::BenchRunner& runner) -> std::vector<deusridet::bench::BenchResult> {
+        return deusridet::bench::runTensorBench(0, 1024, 10);
+    });
+
 BENCH_REGISTER_SWEEP_SUITE(tensor, "Tensor Core WMMA throughput (FP16/BF16)",
     [](deusridet::bench::BenchRunner& runner, int device) -> std::vector<deusridet::bench::SweepReport> {
         deusridet::bench::SweepReport report;

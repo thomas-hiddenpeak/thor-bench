@@ -1022,6 +1022,11 @@ static std::string getSweepTimestamp() {
     return oss.str();
 }
 
+BENCH_REGISTER_SUITE(fp4, "FP4 e2m1 NVFP4 block-scaled GEMM via tcgen05.mma",
+    [](deusridet::bench::BenchRunner& runner) -> std::vector<deusridet::bench::BenchResult> {
+        return deusridet::bench::runFP4Bench(0, 1024, 10);
+    });
+
 BENCH_REGISTER_SWEEP_SUITE(fp4, "FP4 e2m1 NVFP4 block-scaled GEMM via tcgen05.mma",
     [](deusridet::bench::BenchRunner& runner, int device) -> std::vector<deusridet::bench::SweepReport> {
         using deusridet::bench::SweepReport;

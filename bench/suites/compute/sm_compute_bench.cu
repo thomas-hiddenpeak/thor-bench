@@ -434,6 +434,11 @@ std::vector<BenchResult> runSMComputeBench(int device, int blockSizes[], int num
 
 } // namespace deusridet::bench
 
+BENCH_REGISTER_SUITE(sm_compute, "SM FP32/FP64 compute throughput",
+    [](deusridet::bench::BenchRunner& runner) -> std::vector<deusridet::bench::BenchResult> {
+        return deusridet::bench::runSMComputeBench(0, nullptr, 0, 10);
+    });
+
 BENCH_REGISTER_SWEEP_SUITE(sm_compute, "SM FP32/FP64 compute throughput",
     [](deusridet::bench::BenchRunner& runner, int device) -> std::vector<deusridet::bench::SweepReport> {
         deusridet::bench::SweepReport report;
