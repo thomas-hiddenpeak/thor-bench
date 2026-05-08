@@ -149,9 +149,15 @@ static bool int8SparseSupported(int device) {
     chk(cudaSetDevice(device), "probe_dev");
     int major = 0;
     chk(cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, device), "major");
-    // tcgen05.mma.sp kind::i8 IllegalInstruction poisons CUDA context on driver 595.58.03.
-    // Never attempt to run — return stub immediately.
-    return false;
+    if (major < 11) return false;
+    try {
+        int8SparseProbeKernel<<<1, 1>>>();
+        cudaError_t e = cudaDeviceSynchronize();
+        if (e != cudaSuccess) return false;
+    } catch (...) {
+        return false;
+    }
+    return true;
 }
 
 // Tile dimensions: 16x16x16 per warp (same as dense INT8 TC kernel).
@@ -194,7 +200,7 @@ __device__ static uint64_t buildSmemDesc(const void* ptr, int leadingDim, int st
 __device__ static uint32_t buildI8Idesc(int M, int N) {
     constexpr uint8_t S8 = 0x8;
     uint32_t idesc = 0;
-    idesc  = S8;
+    idesc  = (S8 << 7);
     idesc |= (S8 << 10);
     idesc |= (0 << 15);
     idesc |= (1 << 16);

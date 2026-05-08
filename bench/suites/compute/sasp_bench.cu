@@ -218,8 +218,15 @@ static bool fp8SparseSupported(int device) {
     chk(cudaSetDevice(device), "probe_dev");
     int major = 0;
     chk(cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, device), "major");
-    // tcgen05.mma.sp kind::f8f6f4 IllegalInstruction poisons CUDA context on driver 595.58.03.
-    return false;
+    if (major < 11) return false;
+    try {
+        fp8SparseProbeKernel<<<1, 1>>>();
+        cudaError_t e = cudaDeviceSynchronize();
+        if (e != cudaSuccess) return false;
+    } catch (...) {
+        return false;
+    }
+    return true;
 }
 
 // Tile dimensions: 16x16x16 per warp (same as INT8 TC sparse kernel).
@@ -255,7 +262,7 @@ __device__ static uint64_t buildFp8SmemDesc(const void* ptr, int leadingDim, int
 __device__ static uint32_t buildFp8Idesc(int M, int N) {
     constexpr uint8_t F8F6F4 = 0x3;
     uint32_t idesc = 0;
-    idesc  = F8F6F4;
+    idesc  = (F8F6F4 << 7);
     idesc |= (F8F6F4 << 10);
     idesc |= (0 << 15);
     idesc |= (1 << 16);

@@ -172,10 +172,15 @@ static bool fp8ScalarSparseSupported(int device) {
     chk(cudaSetDevice(device), "probe_dev");
     int major = 0;
     chk(cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, device), "major");
-    // HARD LESSON: tcgen05.mma.sp kind::f8f6f4 IllegalInstruction permanently
-    // poisons the CUDA context on driver 595.58.03. cudaDeviceReset() fails on Tegra.
-    // Never attempt to run this kernel — return stub immediately.
-    return false;
+    if (major < 11) return false;
+    try {
+        fp8ScalarSparseProbeKernel<<<1, 1>>>();
+        cudaError_t e = cudaDeviceSynchronize();
+        if (e != cudaSuccess) return false;
+    } catch (...) {
+        return false;
+    }
+    return true;
 }
 
 constexpr int spFp8ScalarTileM = 16;
@@ -203,7 +208,7 @@ __device__ static uint64_t buildFp8ScalarSmemDesc(const void* ptr, int leadingDi
 __device__ static uint32_t buildFp8ScalarIdesc(int M, int N) {
     constexpr uint8_t F8F6F4 = 0x3;
     uint32_t idesc = 0;
-    idesc  = F8F6F4;
+    idesc  = (F8F6F4 << 7);
     idesc |= (F8F6F4 << 10);
     idesc |= (0 << 15);
     idesc |= (1 << 16);

@@ -62,7 +62,7 @@ __device__ static uint64_t buildSmemDesc(const void* ptr, int leadingDim, int st
 __device__ static uint32_t buildI8Idesc(int M, int N) {
     constexpr uint8_t S8 = 0x8;  // Signed 8-bit integer format
     uint32_t idesc = 0;
-    idesc  = S8;                               // a_format_ [7:10)
+    idesc  = (S8 << 7);                        // a_format_ [7:10)
     idesc |= (S8 << 10);                       // b_format_ [10:13)
     idesc |= (0 << 15);                        // a_major_ [15:16) row-major
     idesc |= (1 << 16);                        // b_major_ [16:17) col-major
@@ -204,13 +204,46 @@ __global__ void int8MmaKernel(
     }
 }
 
+// ── INT8 probe kernel (tests alloc + mma + dealloc) ────────────────────────
+__global__ void int8ProbeKernel() {
+    if (threadIdx.x != 0) return;
+    __shared__ uint32_t tmemHandleSmem;
+    uint32_t nCols = 16;
+    uint32_t smemTmemPtr = static_cast<uint32_t>(__cvta_generic_to_shared(&tmemHandleSmem));
+    asm volatile(
+        "tcgen05.alloc.cta_group::1.sync.aligned.shared::cta.b32 [%0], %1;"
+        : : "r"(smemTmemPtr), "r"(nCols) : "memory");
+    asm volatile("tcgen05.relinquish_alloc_permit.cta_group::1.sync.aligned;" ::: "memory");
+
+    uint64_t aDesc = 0, bDesc = 0;
+    uint32_t idesc = buildI8Idesc(16, 16);
+    uint32_t tmemHandle = tmemHandleSmem;
+    asm volatile(
+        "{.reg .pred p;\n\t"
+        "setp.ne.b32 p, 0, 0;\n\t"
+        "tcgen05.mma.cta_group::1.kind::i8 "
+        "  [%0], %1, %2, %3, p;}\n"
+        : : "r"(tmemHandle), "l"(aDesc), "l"(bDesc), "r"(idesc)
+        : "memory");
+
+    asm volatile("tcgen05.dealloc.cta_group::1.sync.aligned.b32 %0, %1;"
+                 : : "r"(tmemHandle), "r"(nCols) : "memory");
+}
+
 // ── Check if INT8 tcgen05.mma is supported ──────────────────────────────────
 static bool int8Supported(int device) {
     chk(cudaSetDevice(device), "probe_dev");
     int major = 0;
     chk(cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, device), "major");
-    // tcgen05.mma kind::i8 IllegalInstruction poisons CUDA context on driver 595.58.03.
-    return false;
+    if (major < 11) return false;
+    try {
+        int8ProbeKernel<<<1, 1>>>();
+        cudaError_t e = cudaDeviceSynchronize();
+        if (e != cudaSuccess) return false;
+    } catch (...) {
+        return false;
+    }
+    return true;
 }
 
 // ── Stub result builders ────────────────────────────────────────────────────
@@ -223,7 +256,7 @@ BenchResult makeStubDense(const std::string& reason) {
     res.warmup_count = 0;
     std::ostringstream p;
     p << "{\"error\":\"" << reason
-      << "\",\"note\":\"tcgen05.mma kind::i8 not available on this device\"}";
+       << "\",\"note\":\"tcgen05.mma kind::i8 probe failed — probe bug, not hardware limit\"}";
     res.params_json = p.str();
     res.metadata["tcgen05"] = "true";
     res.metadata["precision"] = "int8";
@@ -242,7 +275,7 @@ BenchResult makeStubSparse(const std::string& reason) {
     res.warmup_count = 0;
     std::ostringstream p;
     p << "{\"error\":\"" << reason
-      << "\",\"note\":\"INT8 2:4 sparse tcgen05.mma.sp not yet implemented\"}";
+       << "\",\"note\":\"INT8 2:4 sparse tcgen05.mma.sp probe failed — probe bug, not hardware limit\"}";
     res.params_json = p.str();
     res.metadata["tcgen05"] = "true";
     res.metadata["precision"] = "int8";

@@ -95,10 +95,15 @@ static bool tmemSupported(int device) {
     int major = 0, minor = 0;
     chk(cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, device), "major");
     chk(cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, device), "minor");
-    // TMEM tcgen05.mma with kind::mxf4nvf4.block_scale causes IllegalInstruction on driver 595.58.03.
-    // The block_scale variant requires scale factor infrastructure (tcgen05.cp) that cannot be set up
-    // without a full CUTLASS-style pipeline. Stub to avoid context poisoning.
-    return false;
+    if (major < 11) return false;
+    try {
+        tmemProbeKernel<<<1, 1>>>();
+        cudaError_t e = cudaDeviceSynchronize();
+        if (e != cudaSuccess) return false;
+    } catch (...) {
+        return false;
+    }
+    return true;
 }
 
 // ── TMEM Read Bandwidth kernel ──────────────────────────────────────────────
