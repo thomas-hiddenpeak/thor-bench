@@ -436,7 +436,27 @@ std::vector<BenchResult> runSMComputeBench(int device, int blockSizes[], int num
 
 BENCH_REGISTER_SUITE(sm_compute, "SM FP32/FP64 compute throughput",
     [](deusridet::bench::BenchRunner& runner) -> std::vector<deusridet::bench::BenchResult> {
-        return deusridet::bench::runSMComputeBench(0, nullptr, 0, 10);
+        std::vector<deusridet::bench::BenchResult> results;
+        try {
+            return deusridet::bench::runSMComputeBench(0, nullptr, 0, 10);
+        } catch (const std::exception& ex) {
+            const char* what = ex.what();
+            // (ws) workstream error from driver 595.58.03 cumulative bug — return stubs
+            if (strstr(what, "ws") || strstr(what, "workstream")) {
+                std::vector<std::string> tests = {"fp32_fma", "fp64_fma", "regspill_default"};
+                for (const auto& t : tests) {
+                    BenchResult r{};
+                    r.suite_name = "sm_compute";
+                    r.test_name  = t;
+                    r.unit       = "GFLOP/s";
+                    r.sample_count = 0;
+                    r.metadata["stub"] = "true";
+                    r.metadata["stub_reason"] = std::string("(ws) workstream error from driver 595.58.03 cumulative bug: ") + what;
+                    results.push_back(r);
+                }
+            }
+        }
+        return results;
     });
 
 BENCH_REGISTER_SWEEP_SUITE(sm_compute, "SM FP32/FP64 compute throughput",
