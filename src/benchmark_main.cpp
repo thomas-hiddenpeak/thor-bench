@@ -357,9 +357,24 @@ int main(int argc, char* argv[]) {
             std::cout << "[" << suite.name << "] " << suite.description << std::endl;
         }
 
-        // NOTE: (ws) workstream death blocks ALL CUDA calls. No recovery possible within process.
-        // Root cause: some prior suite leaks a dead workstream (driver 595.58.03 bug).
-        // Fix the leaking suite instead of trying context recovery here.
+        // Pre-suite: non-blocking peek at async errors from prior suites.
+        // cudaPeekAtLastError() is pure host-side read (no driver sync).
+        // If a dead workstream error has surfaced, catch it BEFORE launching this suite.
+        {
+            cudaError_t peekErr = cudaPeekAtLastError();
+            if (peekErr != cudaSuccess) {
+                std::cerr << "[PEEK] Dead workstream detected before suite " << suite.name
+                          << " — error: " << cudaGetErrorString(peekErr) << std::endl;
+                BenchResult errResult;
+                errResult.suite_name = suite.name;
+                errResult.test_name  = "context_corrupted";
+                errResult.sample_count = 0;
+                report.results.push_back(errResult);
+                anyFailed = true;
+                if (!args.json) std::cout << std::endl;
+                continue;
+            }
+        }
 
         if (args.cupti) {
             CuptiProfiler::instance().startRange(suite.name.c_str());
@@ -390,11 +405,16 @@ int main(int argc, char* argv[]) {
             CuptiProfiler::instance().stopRange();
         }
 
-        // Do NOT call cudaDeviceSynchronize() after each suite.
-        // A dead async workstream (ws) from a prior suite will block every CUDA API
-        // call including cudaDeviceReset(). The error will naturally surface on the
-        // next suite's first CUDA call, which we catch via the try/catch above.
-        // No recovery is possible on Tegra for (ws) errors — just mark failed and continue.
+        // Post-suite: another non-blocking peek to catch workstream leaks from THIS suite.
+        // Does not block — pure host-side read. If the driver has already surfaced
+        // an async error from this suite, we'll catch it and annotate the NEXT suite.
+        {
+            cudaError_t postPeek = cudaPeekAtLastError();
+            if (postPeek != cudaSuccess) {
+                std::cerr << "[PEEK] Suite " << suite.name
+                          << " leaked async error: " << cudaGetErrorString(postPeek) << std::endl;
+            }
+        }
 
         if (!args.json) std::cout << std::endl;
     }
